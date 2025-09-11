@@ -28,7 +28,7 @@ class NflreadpyConfig(BaseSettings):
 
     # Cache settings
     cache_mode: CacheMode = Field(
-        default=CacheMode.FILESYSTEM,
+        default=CacheMode.MEMORY,
         description="Cache mode: 'memory', 'filesystem', or 'off'",
         alias="NFLREADPY_CACHE",
     )
@@ -37,6 +37,12 @@ class NflreadpyConfig(BaseSettings):
         default_factory=lambda: Path(user_cache_dir("nflreadpy")),
         description="Directory for filesystem cache",
         alias="NFLREADPY_CACHE_DIR",
+    )
+
+    cache_duration: int = Field(
+        default=86400,
+        description="Cache duration in seconds (default: 24 hours)",
+        alias="NFLREADPY_CACHE_DURATION",
     )
 
     # Data preferences

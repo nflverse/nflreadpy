@@ -149,10 +149,8 @@ class NflverseDownloader:
                 # Re-raise the original error
                 raise e
 
-
 # Global downloader instance
 _downloader = NflverseDownloader()
-
 
 def get_downloader() -> NflverseDownloader:
     """Get the global downloader instance."""

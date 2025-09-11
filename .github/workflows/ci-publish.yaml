@@ -3,6 +3,7 @@
 on:
   release:
     types: [published]
+  workflow_dispatch:
 
 name: Publish package to PyPI
 

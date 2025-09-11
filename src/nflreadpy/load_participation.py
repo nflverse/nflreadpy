@@ -27,20 +27,20 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
     Data Dictionary:
         https://nflreadr.nflverse.com/articles/dictionary_participation.html
     """
+    # participation only available on a historical basis from FTN
+    max_season = get_current_season(roster = True) - 1
     if seasons is None:
-        seasons = [get_current_season() - 1]
+        seasons = [max_season]
     elif seasons is True:
-        # Load all available seasons (2016 to current)
-        current_season = get_current_season() - 1
-        seasons = list(range(2016, current_season + 1))
+        # Load all available seasons (2016 to max_season)
+        seasons = list(range(2016, max_season + 1))
     elif isinstance(seasons, int):
         seasons = [seasons]
 
-    # Validate seasons - currently only available on historical basis
-    current_season = get_current_season() - 1
+    # Validate seasons
     for season in seasons:
-        if not isinstance(season, int) or season < 2016 or season > current_season:
-            raise ValueError(f"Season must be between 2016 and {current_season}")
+        if not isinstance(season, int) or season < 2016 or season > max_season:
+            raise ValueError(f"Season must be between 2016 and {max_season}")
 
     downloader = get_downloader()
     dataframes = []

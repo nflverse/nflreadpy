@@ -148,6 +148,9 @@ uv run ruff format
 uv run mypy src
 ```
 
+## Disclaimer
+Most of the first version was written by Claude based on nflreadr, use at your
+own risk.
 
 ## Contributing
 

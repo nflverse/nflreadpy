@@ -1,16 +1,19 @@
 # nflreadpy
 
-A Python package for downloading NFL data from nflverse repositories. This is a Python port of the popular R package [nflreadr](https://github.com/nflverse/nflreadr), designed to provide easy access to NFL data with caching, progress tracking, and modern Python conventions.
+A Python package for downloading NFL data from nflverse repositories. This is a
+Python port of the popular R package [nflreadr](https://github.com/nflverse/nflreadr),
+designed to provide easy access to NFL data with caching, progress tracking, and
+modern Python conventions.
 
 ## Features
 
+- **Compatible API** with nflreadr R package
 - **Fast data loading** with Polars DataFrames
 - **Intelligent caching** (memory or filesystem)
 - **Progress tracking** for large downloads
 - **Modern Python** (3.10+) with type hints
-- **Compatible API** with nflreadr R package
 
-## Installation
+## Install
 
 ```bash
 # Using uv (recommended)
@@ -20,7 +23,7 @@ uv add nflreadpy
 pip install nflreadpy
 ```
 
-## Quick Start
+## Usage
 
 ```python
 import nflreadpy as nfl
@@ -28,40 +31,44 @@ import nflreadpy as nfl
 # Load current season play-by-play data
 pbp = nfl.load_pbp()
 
-# Load multiple seasons
-pbp_multi = nfl.load_pbp([2022, 2023])
+# Load player game-level stats for multiple seasons
+player_stats = nfl.load_player_stats([2022, 2023])
 
-# Load all available data
-pbp_all = nfl.load_pbp(seasons=True)
+# Load all available team level stats
+team_stats = nfl.load_team_stats(seasons=True)
 
-# Load current season player stats
-player_stats = nfl.load_player_stats()
-
-# Load team stats
-team_stats = nfl.load_team_stats()
-
-# Load rosters
-rosters = nfl.load_rosters()
-
-# Load schedules
-schedules = nfl.load_schedules()
+# nflreadpy uses Polars instead of pandas. Convert to pandas if needed:
+pbp_pandas = pbp.to_pandas()
 ```
 
 ## Available Functions
 
 ### Core Loading Functions
 
-- `load_pbp()` - Play-by-play data
-- `load_player_stats()` - Player statistics
-- `load_team_stats()` - Team statistics  
-- `load_rosters()` - Team rosters
-- `load_schedules()` - Game schedules
+- `load_pbp()` - play-by-play data
+- `load_player_stats()` - player game or season statistics
+- `load_team_stats()` - team game or season statistics
+- `load_schedules()` - game schedules and results
+- `load_players()` - player information
+- `load_rosters()` - team rosters
+- `load_rosters_weekly()` - team rosters by season-week
+- `load_snap_counts()` - snap counts
+- `load_nextgen_stats()` - advanced stats from nextgenstats.nfl.com
+- `load_ftn_charting()` - charted stats from ftnfantasy.com/data
+- `load_participation()` - participation data (historical)
+- `load_draft_picks()` - nfl draft picks
+- `load_injuries()` - injury statuses and practice participation
+- `load_contracts()` - historical contract data from OTC
+- `load_officials()` - officials for each game
+- `load_combine()` - nfl combine results
+- `load_depth_charts()` - depth charts
+- `load_trades()` - trades
 
 ### Utility Functions
 
+- `clear_cache()` - Clear cached data
 - `get_current_season()` - Get current NFL season
 - `get_current_week()` - Get current NFL week
-- `clear_cache()` - Clear cached data
 
 ## Configuration
 
@@ -70,10 +77,8 @@ Configure nflreadpy using environment variables:
 ```bash
 # Cache settings
 export NFLREADPY_CACHE=filesystem  # "memory", "filesystem", or "off"
-export NFLREADPY_CACHE_DIR=/path/to/cache
-
-# Data preferences  
-export NFLREADPY_PREFER=parquet    # "parquet" or "csv"
+export NFLREADPY_CACHE_DIR=/path/to/cache # path for filesystem cache
+export NFLREADPY_CACHE_DURATION=86400 # time in seconds
 
 # Behavior
 export NFLREADPY_VERBOSE=true     # Show progress messages
@@ -92,36 +97,37 @@ update_config(
 )
 ```
 
+## Getting help
+
+The best places to get help on this package are:
+
+- the [nflverse discord](https://discord.com/invite/5Er2FBnnQa) (for
+  both this package as well as anything NFL analytics related)
+- opening [an issue](https://github.com/nflverse/nflreadpy/issues/new/choose)
+
 ## Data Sources
 
 nflreadpy downloads data from the following nflverse repositories:
 
 - [nflverse-data](https://github.com/nflverse/nflverse-data) - Play-by-play, rosters, stats
 - [nfldata](https://github.com/nflverse/nfldata) - Schedules and game data
-- [espnscrapeR-data](https://github.com/nflverse/espnscrapeR-data) - ESPN QBR data
-- [dynastyprocess](https://github.com/dynastyprocess/data) - Draft and contract data
-- [ffopportunity](https://github.com/ffverse/ffopportunity) - Fantasy football data
+- [dynastyprocess](https://github.com/dynastyprocess/data) - fantasy football data
+- [ffopportunity](https://github.com/ffverse/ffopportunity) - expected yards and fantasy points
 
-## Why Polars?
+## License
 
-nflreadpy uses [Polars](https://pola.rs/) instead of pandas for better performance:
+MIT License - see [LICENSE](LICENSE) file for details.
 
-- **Faster processing** of large NFL datasets
-- **Lower memory usage** 
-- **Better type system** with lazy evaluation
-- **Modern API** designed for performance
-
-Convert to pandas if needed:
-```python
-df_pandas = df.to_pandas()
-```
+The majority of all nflverse data available (ie all but the FTN data as of July 2025)
+is broadly licensed as CC-BY 4.0, and the FTN data is CC-BY-SA 4.0 (see nflreadr
+docs for each main data file).
 
 ## Development
 
-This project uses modern Python tooling:
+This project uses the following tooling:
 
 - **uv** for dependency management
-- **Ruff** for linting and formatting
+- **ruff** for linting and formatting
 - **mypy** for type checking
 - **pytest** for testing
 
@@ -139,15 +145,13 @@ uv run ruff format
 uv run mypy src
 ```
 
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Many hands make light work! Here are some ways you can contribute to
+this project:
 
-## Acknowledgments
+- You can [open an issue](https://github.com/nflverse/nflreadpy/issues/new/choose) if
+you’d like to request a feature or report a bug/error.
 
-- The [nflverse community](https://github.com/nflverse) for providing the data infrastructure
-- The original [nflreadr](https://github.com/nflverse/nflreadr) R package authors
+- If you’d like to contribute code, please check out [the contribution guidelines](CONTRIBUTING.md).

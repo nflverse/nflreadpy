@@ -13,6 +13,9 @@ def load_teams() -> pl.DataFrame:
     Returns:
         Polars DataFrame with team data including abbreviations, names,
         colors, logos, and other team metadata.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_teams.html
     """
     downloader = get_downloader()
 

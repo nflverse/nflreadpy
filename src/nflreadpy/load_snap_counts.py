@@ -20,6 +20,9 @@ def load_snap_counts(seasons: int | list[int] | bool | None = None) -> pl.DataFr
     Returns:
         Polars DataFrame with snap count data including player information,
         offensive/defensive snaps, and snap percentages.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_snap_counts.html
     """
     if seasons is None:
         seasons = [get_current_season()]

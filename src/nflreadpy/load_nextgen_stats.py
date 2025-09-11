@@ -7,8 +7,7 @@ from .utils_date import get_current_season
 
 
 def load_nextgen_stats(
-    stat_type: str = "passing",
-    seasons: int | list[int] | bool | None = None
+    stat_type: str = "passing", seasons: int | list[int] | bool | None = None
 ) -> pl.DataFrame:
     """
     Load NFL Next Gen Stats data.
@@ -24,6 +23,9 @@ def load_nextgen_stats(
     Returns:
         Polars DataFrame with Next Gen Stats data including advanced metrics
         for passing, receiving, or rushing performance.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_nextgen_stats.html
     """
     if stat_type not in ["passing", "receiving", "rushing"]:
         raise ValueError("stat_type must be 'passing', 'receiving', or 'rushing'")

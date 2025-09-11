@@ -17,6 +17,9 @@ def load_rosters(seasons: int | list[int] | bool | None = None) -> pl.DataFrame:
 
     Returns:
         Polars DataFrame with roster data.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_rosters.html
     """
     if seasons is None:
         seasons = [get_current_season(roster=True)]

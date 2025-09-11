@@ -18,6 +18,9 @@ def load_schedules(seasons: int | list[int] | bool | None = True) -> pl.DataFram
 
     Returns:
         Polars DataFrame with schedule data.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_schedules.html
     """
     downloader = get_downloader()
 

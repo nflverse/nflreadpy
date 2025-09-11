@@ -17,6 +17,9 @@ def load_players() -> pl.DataFrame:
         Polars DataFrame with player data - one row per player with comprehensive
         player information including names, physical stats, draft info, and
         cross-platform ID mappings.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_players.html
     """
     downloader = get_downloader()
 

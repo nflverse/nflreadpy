@@ -76,6 +76,9 @@ def load_player_stats(
 
     Returns:
         Polars DataFrame with player statistics.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_player_stats.html
     """
     return _load_stats("player", seasons, summary_level)
 
@@ -94,5 +97,8 @@ def load_team_stats(
 
     Returns:
         Polars DataFrame with team statistics.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_team_stats.html
     """
     return _load_stats("team", seasons, summary_level)

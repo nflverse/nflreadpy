@@ -20,6 +20,9 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
     Returns:
         Polars DataFrame with participation data including player involvement
         on specific plays and snap participation details.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_participation.html
     """
     if seasons is None:
         seasons = [get_current_season() - 1]

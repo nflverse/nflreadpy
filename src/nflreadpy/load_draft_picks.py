@@ -20,6 +20,9 @@ def load_draft_picks(seasons: int | list[int] | bool | None = True) -> pl.DataFr
     Returns:
         Polars DataFrame with draft pick data including draft year, round,
         pick number, player information, and team data.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_draft_picks.html
     """
     downloader = get_downloader()
 

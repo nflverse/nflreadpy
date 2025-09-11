@@ -12,6 +12,9 @@ def load_contracts() -> pl.DataFrame:
     Returns:
         Polars DataFrame with historical contract information including
         player details, contract terms, values, and team information.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_contracts.html
     """
     downloader = get_downloader()
 

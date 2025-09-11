@@ -18,6 +18,9 @@ def load_combine(seasons: int | list[int] | bool | None = True) -> pl.DataFrame:
     Returns:
         Polars DataFrame with NFL Combine data including player measurements,
         test results (40-yard dash, bench press, etc.), and draft information.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_combine.html
     """
     downloader = get_downloader()
 

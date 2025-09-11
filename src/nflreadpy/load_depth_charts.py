@@ -20,6 +20,9 @@ def load_depth_charts(seasons: int | list[int] | bool | None = None) -> pl.DataF
     Returns:
         Polars DataFrame with depth charts data including player positions,
         depth chart rankings, and team information.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_depth_charts.html
     """
     if seasons is None:
         seasons = [get_current_season(roster=True)]

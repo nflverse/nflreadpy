@@ -68,7 +68,9 @@ class CacheManager:
 
         return None
 
-    def set(self, url: str, data: pl.DataFrame, **kwargs: str | int | float | bool) -> None:
+    def set(
+        self, url: str, data: pl.DataFrame, **kwargs: str | int | float | bool
+    ) -> None:
         """Store data in cache."""
         config = get_config()
 
@@ -146,5 +148,9 @@ def get_cache_manager() -> CacheManager:
 
 
 def clear_cache(pattern: str | None = None) -> None:
-    """Clear cache entries."""
+    """Clear cache entries.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/clear_cache.html
+    """
     _cache_manager.clear(pattern)

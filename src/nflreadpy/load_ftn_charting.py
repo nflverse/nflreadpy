@@ -20,6 +20,9 @@ def load_ftn_charting(seasons: int | list[int] | bool | None = None) -> pl.DataF
     Returns:
         Polars DataFrame with FTN charting data including detailed
         play-by-play charting information and advanced metrics.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_ftn_charting.html
     """
     if seasons is None:
         seasons = [get_current_season()]

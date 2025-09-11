@@ -20,6 +20,9 @@ def load_injuries(seasons: int | list[int] | bool | None = None) -> pl.DataFrame
     Returns:
         Polars DataFrame with injury data including player information,
         injury details, and status reports.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_injuries.html
     """
     if seasons is None:
         seasons = [get_current_season()]

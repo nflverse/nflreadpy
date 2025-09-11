@@ -20,6 +20,9 @@ def load_rosters_weekly(seasons: int | list[int] | bool | None = None) -> pl.Dat
     Returns:
         Polars DataFrame with weekly roster data including player status
         changes, injury designations, and week-by-week roster moves.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_rosters_weekly.html
     """
     if seasons is None:
         seasons = [get_current_season()]

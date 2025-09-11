@@ -20,6 +20,9 @@ def load_officials(seasons: int | list[int] | bool | None = True) -> pl.DataFram
     Returns:
         Polars DataFrame with officials data including referee assignments,
         crew information, and game details.
+
+    See Also:
+        https://nflreadr.nflverse.com/reference/load_officials.html
     """
     downloader = get_downloader()
 

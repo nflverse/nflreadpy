@@ -22,10 +22,10 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
         on specific plays and snap participation details.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_participation.html
+        <https://nflreadr.nflverse.com/reference/load_participation.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_participation.html
+        <https://nflreadr.nflverse.com/articles/dictionary_participation.html>
     """
     # participation only available on a historical basis from FTN
     max_season = get_current_season(roster = True) - 1

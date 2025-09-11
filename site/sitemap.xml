@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/LICENSE/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/api/cache/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/api/configuration/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/api/load_functions/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.readthedocs.io/api/utils/</loc>
+         <lastmod>2025-09-11</lastmod>
+    </url>
+</urlset>

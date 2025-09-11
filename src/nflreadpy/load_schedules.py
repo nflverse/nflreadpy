@@ -20,10 +20,10 @@ def load_schedules(seasons: int | list[int] | bool | None = True) -> pl.DataFram
         Polars DataFrame with schedule data.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_schedules.html
+        <https://nflreadr.nflverse.com/reference/load_schedules.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_schedules.html
+        <https://nflreadr.nflverse.com/articles/dictionary_schedules.html>
     """
     downloader = get_downloader()
 

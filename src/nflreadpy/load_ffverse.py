@@ -21,7 +21,7 @@ def load_ff_playerids() -> pl.DataFrame:
         directly read RDS files, we attempt to use CSV format if available.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_ff_playerids.html
+        <https://nflreadr.nflverse.com/reference/load_ff_playerids.html>
     """
     downloader = get_downloader()
 
@@ -46,7 +46,7 @@ def load_ff_rankings(type: Literal["draft", "week", "all"] = "draft") -> pl.Data
         Polars DataFrame with fantasy football rankings data.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_ff_rankings.html
+        <https://nflreadr.nflverse.com/reference/load_ff_rankings.html>
     """
     downloader = get_downloader()
 
@@ -101,7 +101,7 @@ def load_ff_opportunity(
         ValueError: If season is outside valid range or invalid parameters provided.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_ff_opportunity.html
+        <https://nflreadr.nflverse.com/reference/load_ff_opportunity.html>
     """
     downloader = get_downloader()
 

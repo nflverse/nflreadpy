@@ -136,6 +136,7 @@ This project uses the following tooling:
 - **ruff** for linting and formatting
 - **mypy** for type checking
 - **pytest** for testing
+- **mkdocs** for documentation site
 
 ```bash
 # Install development dependencies
@@ -149,6 +150,12 @@ uv run ruff format
 
 # Type check
 uv run mypy src
+
+# Serve docs site locally
+uv run mkdocs serve
+
+# Build docs site
+uv run mkdocs build
 ```
 
 ## Disclaimer

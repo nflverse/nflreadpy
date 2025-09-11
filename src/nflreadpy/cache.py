@@ -151,6 +151,6 @@ def clear_cache(pattern: str | None = None) -> None:
     """Clear cache entries.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/clear_cache.html
+        <https://nflreadr.nflverse.com/reference/clear_cache.html>
     """
     _cache_manager.clear(pattern)

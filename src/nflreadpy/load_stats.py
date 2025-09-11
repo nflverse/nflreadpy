@@ -78,10 +78,10 @@ def load_player_stats(
         Polars DataFrame with player statistics.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_player_stats.html
+        <https://nflreadr.nflverse.com/reference/load_player_stats.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_player_stats.html
+        <https://nflreadr.nflverse.com/articles/dictionary_player_stats.html>
     """
     return _load_stats("player", seasons, summary_level)
 
@@ -102,9 +102,9 @@ def load_team_stats(
         Polars DataFrame with team statistics.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_team_stats.html
+        <https://nflreadr.nflverse.com/reference/load_team_stats.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_team_stats.html
+        <https://nflreadr.nflverse.com/articles/dictionary_team_stats.html>
     """
     return _load_stats("team", seasons, summary_level)

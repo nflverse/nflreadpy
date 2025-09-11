@@ -26,6 +26,9 @@ def load_nextgen_stats(
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_nextgen_stats.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_nextgen_stats.html
     """
     if stat_type not in ["passing", "receiving", "rushing"]:
         raise ValueError("stat_type must be 'passing', 'receiving', or 'rushing'")

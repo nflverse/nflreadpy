@@ -23,6 +23,9 @@ def load_ftn_charting(seasons: int | list[int] | bool | None = None) -> pl.DataF
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_ftn_charting.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_ftn_charting.html
     """
     if seasons is None:
         seasons = [get_current_season()]

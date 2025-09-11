@@ -23,6 +23,9 @@ def load_injuries(seasons: int | list[int] | bool | None = None) -> pl.DataFrame
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_injuries.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_injuries.html
     """
     if seasons is None:
         seasons = [get_current_season()]

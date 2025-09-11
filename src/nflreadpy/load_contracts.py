@@ -15,6 +15,9 @@ def load_contracts() -> pl.DataFrame:
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_contracts.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_contracts.html
     """
     downloader = get_downloader()
 

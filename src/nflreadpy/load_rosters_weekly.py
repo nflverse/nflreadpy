@@ -23,6 +23,9 @@ def load_rosters_weekly(seasons: int | list[int] | bool | None = None) -> pl.Dat
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_rosters_weekly.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_roster_status.html
     """
     if seasons is None:
         seasons = [get_current_season()]

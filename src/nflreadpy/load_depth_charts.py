@@ -23,6 +23,9 @@ def load_depth_charts(seasons: int | list[int] | bool | None = None) -> pl.DataF
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_depth_charts.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_depth_charts.html
     """
     if seasons is None:
         seasons = [get_current_season(roster=True)]

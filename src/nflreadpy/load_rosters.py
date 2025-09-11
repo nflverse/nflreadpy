@@ -20,6 +20,9 @@ def load_rosters(seasons: int | list[int] | bool | None = None) -> pl.DataFrame:
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_rosters.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_rosters.html
     """
     if seasons is None:
         seasons = [get_current_season(roster=True)]

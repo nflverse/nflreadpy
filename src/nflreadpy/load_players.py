@@ -20,6 +20,9 @@ def load_players() -> pl.DataFrame:
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_players.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_players.html
     """
     downloader = get_downloader()
 

@@ -23,6 +23,9 @@ def load_snap_counts(seasons: int | list[int] | bool | None = None) -> pl.DataFr
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_snap_counts.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_snap_counts.html
     """
     if seasons is None:
         seasons = [get_current_season()]

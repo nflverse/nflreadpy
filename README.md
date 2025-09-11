@@ -114,6 +114,9 @@ nflreadpy downloads data from the following nflverse repositories:
 - [dynastyprocess](https://github.com/dynastyprocess/data) - fantasy football data
 - [ffopportunity](https://github.com/ffverse/ffopportunity) - expected yards and fantasy points
 
+See the automation status page [here](https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html)
+for last update date/times for each release.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

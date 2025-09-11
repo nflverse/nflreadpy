@@ -21,6 +21,9 @@ def load_combine(seasons: int | list[int] | bool | None = True) -> pl.DataFrame:
 
     See Also:
         https://nflreadr.nflverse.com/reference/load_combine.html
+
+    Data Dictionary:
+        https://nflreadr.nflverse.com/articles/dictionary_combine.html
     """
     downloader = get_downloader()
 

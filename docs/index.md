@@ -43,11 +43,11 @@ pbp_pandas = pbp.to_pandas()
 
 ## Available Functions
 
-[Reference page for all load functions](/api/load_functions)
+[Reference page for all load functions](api/load_functions.md)
 
 ## Configuration
 
-[Reference page for config options](/api/configuration)
+[Reference page for config options](api/configuration.md)
 
 ## Getting help
 

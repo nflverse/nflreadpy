@@ -7,7 +7,8 @@ from .utils_date import get_current_season
 
 
 def load_nextgen_stats(
-    stat_type: str = "passing", seasons: int | list[int] | bool | None = None
+    stat_type: str = "passing",
+    seasons: int | list[int] | bool | None = None
 ) -> pl.DataFrame:
     """
     Load NFL Next Gen Stats data.

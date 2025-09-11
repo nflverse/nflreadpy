@@ -52,13 +52,6 @@ class NflreadpyConfig(BaseSettings):
         alias="NFLREADPY_PREFER",
     )
 
-    # Download settings
-    download_path: Path | None = Field(
-        default=None,
-        description="Custom download path",
-        alias="NFLREADPY_DOWNLOAD_PATH",
-    )
-
     # Progress and logging
     verbose: bool = Field(
         default=True,

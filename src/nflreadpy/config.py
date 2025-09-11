@@ -3,6 +3,7 @@
 from enum import Enum
 from pathlib import Path
 
+from importlib.metadata import version
 from platformdirs import user_cache_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,7 +68,7 @@ class NflreadpyConfig(BaseSettings):
     )
 
     user_agent: str = Field(
-        default="nflreadpy/0.1.0",
+        default=f"nflverse/nflreadpy {version('nflreadpy')}",
         description="User agent for HTTP requests",
         alias="NFLREADPY_USER_AGENT",
     )

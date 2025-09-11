@@ -5,7 +5,9 @@ This package provides a Python interface to access NFL data from various
 nflverse repositories, with caching, progress tracking, and data validation.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version
+
+__version__ = version("nflreadpy")
 
 from .cache import clear_cache
 from .load_combine import load_combine

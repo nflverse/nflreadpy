@@ -13,7 +13,7 @@ jobs:
     name: Upload to PyPI
 
     env:
-      UV_PYTHON: 3.10
+      UV_PYTHON: "3.10"
 
     steps:
       - uses: actions/checkout@v4

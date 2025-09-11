@@ -32,6 +32,10 @@ class TestImports:
             "load_trades",
             "load_ftn_charting",
             "load_rosters_weekly",
+            # ffverse functions
+            "load_ff_playerids",
+            "load_ff_rankings",
+            "load_ff_opportunity",
             # Utility functions
             "get_current_season",
             "get_current_week",
@@ -81,7 +85,6 @@ class TestStaticDataLoaders:
         assert isinstance(df, pl.DataFrame)
         assert len(df) > 0
 
-
     def test_load_trades(self):
         """Test load_trades function."""
         df = nfl.load_trades()
@@ -91,6 +94,30 @@ class TestStaticDataLoaders:
     def test_load_contracts(self):
         """Test load_contracts function."""
         df = nfl.load_contracts()
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_playerids(self):
+        """Test load_ff_playerids function."""
+        df = nfl.load_ff_playerids()
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_rankings_draft(self):
+        """Test load_ff_rankings with draft type."""
+        df = nfl.load_ff_rankings("draft")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_rankings_week(self):
+        """Test load_ff_rankings with week type."""
+        df = nfl.load_ff_rankings("week")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_rankings_all(self):
+        """Test load_ff_rankings with all type."""
+        df = nfl.load_ff_rankings("all")
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
@@ -146,7 +173,6 @@ class TestSeasonalDataLoaders:
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
-
     def test_load_snap_counts_2024_season(self):
         """Test load_snap_counts with 2024 season."""
         df = nfl.load_snap_counts(2024)
@@ -195,6 +221,24 @@ class TestSeasonalDataLoaders:
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
+    def test_load_ff_opportunity_2024_season_week(self):
+        """Test load_ff_opportunity week with specific season."""
+        df = nfl.load_ff_opportunity(2024, stat_type="week")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_opportunity_2024_season_pbp_rush(self):
+        """Test load_ff_opportunity pbp_rush with specific season."""
+        df = nfl.load_ff_opportunity(2024, stat_type="pbp_rush")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_ff_opportunity_2024_season_pbp_pass(self):
+        """Test load_ff_opportunity pbp_pass with specific season."""
+        df = nfl.load_ff_opportunity(2024, stat_type="pbp_pass")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
 
 class TestErrorHandling:
     """Test error handling for invalid inputs."""
@@ -211,6 +255,26 @@ class TestErrorHandling:
         """Test load_pbp with invalid type."""
         with pytest.raises((ValueError, TypeError)):
             nfl.load_pbp("invalid")
+
+    def test_load_ff_rankings_invalid_type(self):
+        """Test load_ff_rankings with invalid type."""
+        with pytest.raises(ValueError):
+            nfl.load_ff_rankings("invalid")
+
+    def test_load_ff_opportunity_invalid_season(self):
+        """Test load_ff_opportunity with invalid season."""
+        with pytest.raises(ValueError):
+            nfl.load_ff_opportunity(2010)  # Too early
+
+    def test_load_ff_opportunity_invalid_stat_type(self):
+        """Test load_ff_opportunity with invalid stat_type."""
+        with pytest.raises(ValueError):
+            nfl.load_ff_opportunity(2023, stat_type="invalid")
+
+    def test_load_ff_opportunity_invalid_model_version(self):
+        """Test load_ff_opportunity with invalid model_version."""
+        with pytest.raises(ValueError):
+            nfl.load_ff_opportunity(2023, model_version="invalid")
 
 
 class TestDataQuality:

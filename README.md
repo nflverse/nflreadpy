@@ -63,6 +63,9 @@ pbp_pandas = pbp.to_pandas()
 - `load_combine()` - nfl combine results
 - `load_depth_charts()` - depth charts
 - `load_trades()` - trades
+- `load_ff_playerids()` - ffverse/dynastyprocess player ids
+- `load_ff_rankings()` - fantasypros rankings
+- `load_ff_opportunity()` - expected yards, touchdowns, and fantasy points
 
 ### Utility Functions
 

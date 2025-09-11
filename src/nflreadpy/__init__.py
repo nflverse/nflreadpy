@@ -12,6 +12,7 @@ from .load_combine import load_combine
 from .load_contracts import load_contracts
 from .load_depth_charts import load_depth_charts
 from .load_draft_picks import load_draft_picks
+from .load_ffverse import load_ff_opportunity, load_ff_playerids, load_ff_rankings
 from .load_ftn_charting import load_ftn_charting
 from .load_injuries import load_injuries
 from .load_nextgen_stats import load_nextgen_stats
@@ -49,6 +50,10 @@ __all__ = [
     "load_trades",
     "load_ftn_charting",
     "load_rosters_weekly",
+    # ffverse functions
+    "load_ff_playerids",
+    "load_ff_rankings",
+    "load_ff_opportunity",
     # Utility functions
     "get_current_season",
     "get_current_week",

@@ -3,7 +3,9 @@
     "allow": [
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(uv run pytest:*)"
+      "WebFetch(domain:nflreadr.nflverse.com)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run ruff:*)"
     ],
     "deny": [],
     "ask": []

@@ -15,10 +15,10 @@ def load_trades() -> pl.DataFrame:
         teams, draft picks, and trade details.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_trades.html
+        <https://nflreadr.nflverse.com/reference/load_trades.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_trades.html
+        <https://nflreadr.nflverse.com/articles/dictionary_trades.html>
     """
     downloader = get_downloader()
 

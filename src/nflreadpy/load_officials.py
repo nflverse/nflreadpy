@@ -22,7 +22,7 @@ def load_officials(seasons: int | list[int] | bool | None = True) -> pl.DataFram
         crew information, and game details.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_officials.html
+        <https://nflreadr.nflverse.com/reference/load_officials.html>
     """
     downloader = get_downloader()
 

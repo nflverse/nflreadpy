@@ -22,10 +22,10 @@ def load_draft_picks(seasons: int | list[int] | bool | None = True) -> pl.DataFr
         pick number, player information, and team data.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_draft_picks.html
+        <https://nflreadr.nflverse.com/reference/load_draft_picks.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_draft_picks.html
+        <https://nflreadr.nflverse.com/articles/dictionary_draft_picks.html>
     """
     downloader = get_downloader()
 

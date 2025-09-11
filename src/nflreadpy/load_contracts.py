@@ -14,10 +14,10 @@ def load_contracts() -> pl.DataFrame:
         player details, contract terms, values, and team information.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_contracts.html
+        <https://nflreadr.nflverse.com/reference/load_contracts.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_contracts.html
+        <https://nflreadr.nflverse.com/articles/dictionary_contracts.html>
     """
     downloader = get_downloader()
 

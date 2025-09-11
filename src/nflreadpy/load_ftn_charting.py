@@ -22,10 +22,10 @@ def load_ftn_charting(seasons: int | list[int] | bool | None = None) -> pl.DataF
         play-by-play charting information and advanced metrics.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_ftn_charting.html
+        <https://nflreadr.nflverse.com/reference/load_ftn_charting.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_ftn_charting.html
+        <https://nflreadr.nflverse.com/articles/dictionary_ftn_charting.html>
     """
     if seasons is None:
         seasons = [get_current_season()]

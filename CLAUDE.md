@@ -25,11 +25,11 @@ nflreadpy is a Python port of the R package nflreadr, providing access to NFL da
 When adding new load functions, follow this pattern:
 
 1. **File Structure**: Create `src/nflreadpy/load_[function_name].py`
-2. **Import Pattern**: 
+2. **Import Pattern**:
    ```python
    from .utils_date import get_current_season  # NOT from .utils
    ```
-3. **Season Logic**: 
+3. **Season Logic**:
    - Use `get_current_season()` for game data
    - Use `get_current_season(roster=True)` for roster/depth chart data
 4. **URL Structure**: Check the actual nflreadr R files for correct paths
@@ -57,7 +57,7 @@ for season in seasons:
 
 ## Common Mistakes to Avoid
 
-1. **Import Paths**: Use `from .utils_date import get_current_season`, not `from .utils import`  
+1. **Import Paths**: Use `from .utils_date import get_current_season`, not `from .utils import`
 2. **Data Formats**: Don't default to CSV globally - only use it where Parquet isn't available
 3. **R Dependencies**: Don't try to read RDS files - they're R-specific format
 
@@ -93,7 +93,7 @@ uv sync --dev
 # Format code
 uv run ruff format
 
-# Lint code  
+# Lint code
 uv run ruff check --fix
 
 # Type check
@@ -101,6 +101,12 @@ uv run mypy src
 
 # Run tests
 uv run pytest
+
+# Serve docs site for local devel
+uv run mkdocs serve
+
+# Build docs site
+uv run mkdocs build
 
 # Build package
 uv build

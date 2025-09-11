@@ -15,7 +15,7 @@ def load_teams() -> pl.DataFrame:
         colors, logos, and other team metadata.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_teams.html
+        <https://nflreadr.nflverse.com/reference/load_teams.html>
     """
     downloader = get_downloader()
 

@@ -19,10 +19,10 @@ def load_pbp(seasons: int | list[int] | bool | None = None) -> pl.DataFrame:
         Polars DataFrame with play-by-play data.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/load_pbp.html
+        <https://nflreadr.nflverse.com/reference/load_pbp.html>
 
     Data Dictionary:
-        https://nflreadr.nflverse.com/articles/dictionary_pbp.html
+        <https://nflreadr.nflverse.com/articles/dictionary_pbp.html>
     """
     if seasons is None:
         seasons = [get_current_season()]

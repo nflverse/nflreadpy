@@ -15,7 +15,7 @@ def get_current_season(roster: bool = False) -> int:
         The current season/roster year.
 
     See Also:
-        https://nflreadr.nflverse.com/reference/get_current_season.html
+        <https://nflreadr.nflverse.com/reference/get_current_season.html>
     """
     today = date.today()
     current_year = today.year
@@ -46,7 +46,7 @@ def get_current_week() -> int:
         The current NFL week (1-22).
 
     See Also:
-        https://nflreadr.nflverse.com/reference/get_current_week.html
+        <https://nflreadr.nflverse.com/reference/get_current_week.html>
     """
     today = date.today()
     season_year = get_current_season()

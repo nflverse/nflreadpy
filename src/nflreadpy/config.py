@@ -1,9 +1,10 @@
 """Configuration management for nflreadpy."""
 
 from enum import Enum
-from pathlib import Path
-
 from importlib.metadata import version
+from pathlib import Path
+from typing import Any
+
 from platformdirs import user_cache_dir
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -89,7 +90,7 @@ def get_config() -> NflreadpyConfig:
     return config
 
 
-def update_config(**kwargs) -> None:
+def update_config(**kwargs: Any) -> None:
     """Update configuration settings."""
     global config
     for key, value in kwargs.items():

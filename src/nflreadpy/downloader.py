@@ -1,5 +1,6 @@
 """Data downloading functionality for nflreadpy."""
 
+from typing import Any
 from urllib.parse import urljoin
 
 import polars as pl
@@ -21,7 +22,7 @@ class NflverseDownloader:
         "ffopportunity": "https://github.com/ffverse/ffopportunity/releases/download/",
     }
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.session = requests.Session()
         self.cache = get_cache_manager()
 
@@ -47,7 +48,7 @@ class NflverseDownloader:
 
         return urljoin(base_url, path)
 
-    def _download_file(self, url: str, **kwargs) -> pl.DataFrame:
+    def _download_file(self, url: str, **kwargs: Any) -> pl.DataFrame:
         """Download and parse a data file."""
         config = get_config()
 
@@ -91,7 +92,7 @@ class NflverseDownloader:
                 # Try to detect format from content
                 try:
                     data = pl.read_parquet(content)
-                except:
+                except Exception:
                     data = pl.read_csv(content, null_values=["NA", "NULL", ""])
 
             # Cache the result
@@ -100,16 +101,16 @@ class NflverseDownloader:
             return data
 
         except requests.exceptions.RequestException as e:
-            raise ConnectionError(f"Failed to download {url}: {e}")
+            raise ConnectionError(f"Failed to download {url}: {e}") from e
         except Exception as e:
-            raise ValueError(f"Failed to parse data from {url}: {e}")
+            raise ValueError(f"Failed to parse data from {url}: {e}") from e
 
     def download(
         self,
         repository: str,
         path: str,
         format_preference: DataFormat | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> pl.DataFrame:
         """
         Download data from an nflverse repository.
@@ -147,7 +148,7 @@ class NflverseDownloader:
                 return self._download_file(url, **kwargs)
             except Exception:
                 # Re-raise the original error
-                raise e
+                raise e from None
 
 
 # Global downloader instance

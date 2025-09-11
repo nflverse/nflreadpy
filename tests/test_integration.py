@@ -223,7 +223,7 @@ class TestSeasonalDataLoaders:
 
     def test_load_ff_opportunity_2024_season_week(self):
         """Test load_ff_opportunity week with specific season."""
-        df = nfl.load_ff_opportunity(2024, stat_type="week")
+        df = nfl.load_ff_opportunity(2024, stat_type="weekly")
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
@@ -264,7 +264,7 @@ class TestErrorHandling:
     def test_load_ff_opportunity_invalid_season(self):
         """Test load_ff_opportunity with invalid season."""
         with pytest.raises(ValueError):
-            nfl.load_ff_opportunity(2010)  # Too early
+            nfl.load_ff_opportunity(2005)  # Too early
 
     def test_load_ff_opportunity_invalid_stat_type(self):
         """Test load_ff_opportunity with invalid stat_type."""

@@ -86,13 +86,13 @@ class NflverseDownloader:
             if url.endswith(".parquet"):
                 data = pl.read_parquet(content)
             elif url.endswith(".csv"):
-                data = pl.read_csv(content)
+                data = pl.read_csv(content, null_values=["NA", "NULL", ""])
             else:
                 # Try to detect format from content
                 try:
                     data = pl.read_parquet(content)
                 except:
-                    data = pl.read_csv(content)
+                    data = pl.read_csv(content, null_values=["NA", "NULL", ""])
 
             # Cache the result
             self.cache.set(url, data, **kwargs)

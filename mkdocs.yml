@@ -1,6 +1,6 @@
 site_name: nflreadpy
 site_description: A Python package for downloading NFL data from nflverse repositories
-site_url: https://nflreadpy.readthedocs.io
+site_url: https://nflreadpy.nflverse.com
 repo_url: https://github.com/nflverse/nflreadpy
 repo_name: nflverse/nflreadpy
 

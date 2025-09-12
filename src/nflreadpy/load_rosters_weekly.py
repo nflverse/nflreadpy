@@ -53,4 +53,4 @@ def load_rosters_weekly(seasons: int | list[int] | bool | None = None) -> pl.Dat
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes)
+        return pl.concat(dataframes, how="diagonal_relaxed")

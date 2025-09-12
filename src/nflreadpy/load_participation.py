@@ -28,7 +28,7 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
         <https://nflreadr.nflverse.com/articles/dictionary_participation.html>
     """
     # participation only available on a historical basis from FTN
-    max_season = get_current_season(roster = True) - 1
+    max_season = get_current_season(roster=True) - 1
     if seasons is None:
         seasons = [max_season]
     elif seasons is True:
@@ -53,4 +53,4 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes)
+        return pl.concat(dataframes, how="diagonal_relaxed")

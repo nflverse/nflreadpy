@@ -59,7 +59,7 @@ def _load_stats(
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes)
+        return pl.concat(dataframes, how="diagonal_relaxed")
 
 
 def load_player_stats(

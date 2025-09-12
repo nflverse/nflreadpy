@@ -153,4 +153,4 @@ def load_ff_opportunity(
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes)
+        return pl.concat(dataframes, how="diagonal_relaxed")

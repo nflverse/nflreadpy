@@ -53,4 +53,4 @@ def load_injuries(seasons: int | list[int] | bool | None = None) -> pl.DataFrame
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes)
+        return pl.concat(dataframes, how="diagonal_relaxed")

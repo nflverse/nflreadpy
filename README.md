@@ -95,8 +95,7 @@ from nflreadpy.config import update_config
 
 update_config(
     cache_mode="memory",
-    verbose=False,
-    prefer_format="csv"
+    verbose=False
 )
 ```
 

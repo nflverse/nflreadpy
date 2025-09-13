@@ -88,12 +88,6 @@ class NflverseDownloader:
                 data = pl.read_parquet(content)
             elif url.endswith(".csv"):
                 data = pl.read_csv(content, null_values=["NA", "NULL", ""])
-            else:
-                # Try to detect format from content
-                try:
-                    data = pl.read_parquet(content)
-                except Exception:
-                    data = pl.read_csv(content, null_values=["NA", "NULL", ""])
 
             # Cache the result
             self.cache.set(url, data, **kwargs)
@@ -109,7 +103,7 @@ class NflverseDownloader:
         self,
         repository: str,
         path: str,
-        format_preference: DataFormat | None = None,
+        format: DataFormat = DataFormat.PARQUET,
         **kwargs: Any,
     ) -> pl.DataFrame:
         """
@@ -118,37 +112,14 @@ class NflverseDownloader:
         Args:
             repository: The repository name (e.g., 'nflverse-data')
             path: The path to the data file within the repository
-            format_preference: Preferred format (parquet or csv)
+            format: Data format (parquet or csv)
             **kwargs: Additional parameters for caching
 
         Returns:
             Polars DataFrame with the requested data
         """
-        config = get_config()
-        format_type = format_preference or config.prefer_format
-
-        # Try preferred format first
-        try:
-            url = self._build_url(repository, path, format_type)
-            return self._download_file(url, **kwargs)
-        except (ConnectionError, requests.exceptions.HTTPError) as e:
-            # If preferred format fails, try the alternative
-            if format_type == DataFormat.PARQUET:
-                alt_format = DataFormat.CSV
-            else:
-                alt_format = DataFormat.PARQUET
-
-            if config.verbose:
-                print(
-                    f"Failed to download {format_type.value} format, trying {alt_format.value}"
-                )
-
-            try:
-                url = self._build_url(repository, path, alt_format)
-                return self._download_file(url, **kwargs)
-            except Exception:
-                # Re-raise the original error
-                raise e from None
+        url = self._build_url(repository, path, format)
+        return self._download_file(url, **kwargs)
 
 
 # Global downloader instance

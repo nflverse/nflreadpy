@@ -25,9 +25,7 @@ def load_ff_playerids() -> pl.DataFrame:
     """
     downloader = get_downloader()
 
-    df = downloader.download(
-        "dynastyprocess", "db_playerids", format_preference=DataFormat.CSV
-    )
+    df = downloader.download("dynastyprocess", "db_playerids", format=DataFormat.CSV)
 
     return df
 
@@ -65,9 +63,7 @@ def load_ff_rankings(type: Literal["draft", "week", "all"] = "draft") -> pl.Data
     if type == "all":
         df = downloader.download("dynastyprocess", filename)
     else:
-        df = downloader.download(
-            "dynastyprocess", filename, format_preference=DataFormat.CSV
-        )
+        df = downloader.download("dynastyprocess", filename, format=DataFormat.CSV)
 
     return df
 

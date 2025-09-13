@@ -7,11 +7,10 @@ modern Python conventions.
 
 ## Features
 
-- **Compatible API** with nflreadr R package
-- **Fast data loading** with Polars DataFrames
-- **Intelligent caching** (memory or filesystem)
-- **Progress tracking** for large downloads
-- **Modern Python** (3.10+) with type hints
+- Compatible API with nflreadr R package
+- Fast data loading with Polars DataFrames
+- Intelligent caching (memory or filesystem)
+- Progress tracking for large downloads
 
 ## Install
 
@@ -131,11 +130,11 @@ docs for each main data file).
 
 This project uses the following tooling:
 
-- **uv** for dependency management
-- **ruff** for linting and formatting
-- **mypy** for type checking
-- **pytest** for testing
-- **mkdocs** for documentation site
+- uv for dependency management
+- ruff for linting and formatting
+- mypy for type checking
+- pytest for testing
+- mkdocs for documentation site
 
 ```bash
 # Install development dependencies

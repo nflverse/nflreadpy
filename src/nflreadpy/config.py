@@ -83,13 +83,6 @@ class NflreadpyConfig(BaseSettings):
         alias="NFLREADPY_CACHE_DURATION",
     )
 
-    # Data preferences
-    prefer_format: DataFormat = Field(
-        default=DataFormat.PARQUET,
-        description="Preferred data format for downloads. 'parquet' is faster and more robust, 'csv' is more likely to be available. Falls back automatically if preferred format unavailable.",
-        alias="NFLREADPY_PREFER",
-    )
-
     # Progress and logging
     verbose: bool = Field(
         default=True,
@@ -145,7 +138,6 @@ def update_config(**kwargs: Any) -> None:
             - cache_mode: "memory", "filesystem", or "off"
             - cache_dir: Path to cache directory (str or Path)
             - cache_duration: Cache duration in seconds (int)
-            - prefer_format: "parquet" or "csv"
             - verbose: Enable verbose output (bool)
             - timeout: HTTP timeout in seconds (int)
             - user_agent: Custom user agent string (str)
@@ -162,9 +154,9 @@ def update_config(**kwargs: Any) -> None:
             verbose=True
         )
 
-        # Prefer CSV format and increase timeout
+        # Disable caching and increase timeout
         update_config(
-            prefer_format="csv",
+            cache_mode="off"
             timeout=60
         )
         ```

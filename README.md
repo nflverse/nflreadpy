@@ -1,4 +1,13 @@
-# nflreadpy
+# nflreadpy <a href='https://nflreadpy.nflverse.com'><img src='docs/assets/nflverse.png' align="right" width="25%" min-width="120px" /></a>
+<!-- badges: start -->
+[![PyPI status](https://img.shields.io/pypi/v/nflreadpy?style=flat-square&logo=python&label=pypi)](https://pypi.org/project/nflreadpy/)
+[![Dev status](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fnflverse%2Fnflreadpy%2Fraw%2Fmain%2Fpyproject.toml&query=%24.project.version&prefix=v&style=flat-square&label=dev%20version
+)](https://nflreadpy.nflverse.com/)
+[![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg?style=flat-square)](https://lifecycle.r-lib.org/articles/stages.html)
+[![CI test status](https://img.shields.io/github/actions/workflow/status/nflverse/nflreadpy/ci-test.yaml?label=CI%20tests&style=flat-square&logo=github)](https://github.com/nflverse/nflreadpy/actions)
+[![nflverse discord](https://img.shields.io/discord/789805604076126219?color=7289da&label=nflverse%20discord&logo=discord&logoColor=fff&style=flat-square)](https://discord.com/invite/5Er2FBnnQa)
+
+<!-- badges: end -->
 
 A Python package for downloading NFL data from nflverse repositories. This is a
 Python port of the popular R package [nflreadr](https://github.com/nflverse/nflreadr),

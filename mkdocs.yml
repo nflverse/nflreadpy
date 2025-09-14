@@ -9,7 +9,7 @@ theme:
   font:
     text: IBM Plex Sans
     code: IBM Plex Mono
-
+  logo: assets/nflverse.png
 
   palette:
     - scheme: default

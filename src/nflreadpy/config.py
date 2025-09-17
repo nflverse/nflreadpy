@@ -85,7 +85,7 @@ class NflreadpyConfig(BaseSettings):
 
     # Progress and logging
     verbose: bool = Field(
-        default=True,
+        default=False,
         description="Enable verbose output including progress bars and download status messages. Set to False for silent operation.",
         alias="NFLREADPY_VERBOSE",
     )

@@ -16,10 +16,10 @@ def load_nextgen_stats(
     Data available since 2016.
 
     Args:
-        stat_type: Type of stats to load. Options: "passing", "receiving", "rushing".
         seasons: Season(s) to load. If None, loads current season.
                 If True, loads all available data since 2016.
                 If int or list of ints, loads specified season(s).
+        stat_type: Type of stats to load. Options: "passing", "receiving", "rushing".
 
     Returns:
         Polars DataFrame with Next Gen Stats data including advanced metrics

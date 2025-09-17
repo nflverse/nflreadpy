@@ -181,7 +181,7 @@ class TestSeasonalDataLoaders:
 
     def test_load_nextgen_stats_2024_season(self):
         """Test load_nextgen_stats with 2024 season."""
-        df = nfl.load_nextgen_stats("passing", 2024)
+        df = nfl.load_nextgen_stats(2024, "passing")
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 

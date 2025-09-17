@@ -1,13 +1,14 @@
 """Load NFL Next Gen Stats data."""
 
 import polars as pl
-
+from typing import Literal
 from .downloader import get_downloader
 from .utils_date import get_current_season
 
 
 def load_nextgen_stats(
-    stat_type: str = "passing", seasons: int | list[int] | bool | None = None
+    seasons: int | list[int] | bool | None = None,
+    stat_type: Literal["passing", "receiving", "rushing"] = "passing"
 ) -> pl.DataFrame:
     """
     Load NFL Next Gen Stats data.

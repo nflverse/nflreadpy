@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "nflreadpy"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Python package for downloading NFL data from nflverse repositories"
 readme = "README.md"
 license = "MIT"

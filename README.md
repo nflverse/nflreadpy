@@ -86,24 +86,27 @@ pbp_pandas = pbp.to_pandas()
 Configure nflreadpy using environment variables:
 
 ```bash
-# Cache settings
-export NFLREADPY_CACHE=filesystem  # "memory", "filesystem", or "off"
-export NFLREADPY_CACHE_DIR=/path/to/cache # path for filesystem cache
-export NFLREADPY_CACHE_DURATION=86400 # time in seconds
+export NFLREADPY_CACHE='memory' # Cache mode ("memory", "filesystem", or "off")
+export NFLREADPY_CACHE_DIR='~/my_cache_dir' # Directory path for filesystem cache
+export NFLREADPY_CACHE_DURATION=86400 # Cache duration in seconds
 
-# Behavior
-export NFLREADPY_VERBOSE=true     # Show progress messages
-export NFLREADPY_TIMEOUT=30       # Request timeout in seconds
+export NFLREADPY_VERBOSE='False' # Enable verbose output (true/false)
+export NFLREADPY_TIMEOUT=30 # HTTP request timeout in seconds
+export NFLREADPY_USER_AGENT='nflreadpy/v0.1.1' # Custom user agent string
 ```
 
-Or configure programmatically:
+or configure programmatically:
 
 ```python
 from nflreadpy.config import update_config
 
 update_config(
     cache_mode="memory",
-    verbose=False
+    cache_dir='~/my_cache_dir',
+    cache_duration=86400,
+    verbose=False,
+    timeout=30,
+    user_agent='nflreadpy/v0.1.1'
 )
 ```
 

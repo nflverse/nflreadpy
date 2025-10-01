@@ -18,7 +18,7 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with participation data including player involvement
+        Polars DataFrame with participation data including player involvement\
         on specific plays and snap participation details.
 
     See Also:

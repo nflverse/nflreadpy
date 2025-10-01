@@ -18,7 +18,7 @@ def load_injuries(seasons: int | list[int] | bool | None = None) -> pl.DataFrame
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with injury data including player information,
+        Polars DataFrame with injury data including player information,\
         injury details, and status reports.
 
     See Also:

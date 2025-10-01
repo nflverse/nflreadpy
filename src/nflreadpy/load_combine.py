@@ -16,7 +16,7 @@ def load_combine(seasons: int | list[int] | bool | None = True) -> pl.DataFrame:
                 If None, loads current season.
 
     Returns:
-        Polars DataFrame with NFL Combine data including player measurements,
+        Polars DataFrame with NFL Combine data including player measurements,\
         test results (40-yard dash, bench press, etc.), and draft information.
 
     See Also:

@@ -1,14 +1,16 @@
 """Load NFL Next Gen Stats data."""
 
-import polars as pl
 from typing import Literal
+
+import polars as pl
+
 from .downloader import get_downloader
 from .utils_date import get_current_season
 
 
 def load_nextgen_stats(
     seasons: int | list[int] | bool | None = None,
-    stat_type: Literal["passing", "receiving", "rushing"] = "passing"
+    stat_type: Literal["passing", "receiving", "rushing"] = "passing",
 ) -> pl.DataFrame:
     """
     Load NFL Next Gen Stats data.
@@ -22,7 +24,7 @@ def load_nextgen_stats(
         stat_type: Type of stats to load. Options: "passing", "receiving", "rushing".
 
     Returns:
-        Polars DataFrame with Next Gen Stats data including advanced metrics
+        Polars DataFrame with Next Gen Stats data including advanced metrics\
         for passing, receiving, or rushing performance.
 
     See Also:

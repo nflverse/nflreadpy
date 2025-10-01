@@ -11,7 +11,7 @@ def load_trades() -> pl.DataFrame:
     Load NFL trades data.
 
     Returns:
-        Polars DataFrame with NFL trade information including players,
+        Polars DataFrame with NFL trade information including players,\
         teams, draft picks, and trade details.
 
     See Also:

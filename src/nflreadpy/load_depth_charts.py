@@ -18,7 +18,7 @@ def load_depth_charts(seasons: int | list[int] | bool | None = None) -> pl.DataF
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with depth charts data including player positions,
+        Polars DataFrame with depth charts data including player positions,\
         depth chart rankings, and team information.
 
     See Also:

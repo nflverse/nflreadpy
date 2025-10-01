@@ -19,7 +19,7 @@ def load_teams() -> pl.DataFrame:
     """
     downloader = get_downloader()
 
-    # Load teams data from nfldata repository (CSV format)
-    df = downloader.download("nfldata", "teams", format=DataFormat.CSV)
+    # Load teams data from nflverse-data repository
+    df = downloader.download("nflverse-data", "teams/teams_colors_logos")
 
     return df

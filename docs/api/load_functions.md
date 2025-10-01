@@ -4,6 +4,7 @@
 ::: nflreadpy.load_player_stats
 ::: nflreadpy.load_team_stats
 ::: nflreadpy.load_schedules
+::: nflreadpy.load_teams
 ::: nflreadpy.load_players
 ::: nflreadpy.load_rosters
 ::: nflreadpy.load_rosters_weekly

@@ -1,3 +1,16 @@
+# nflreadpy (development version)
+
+- load_teams() now points to nflverse-data@teams, which makes it consistent with nflreadr
+
+# nflreadpy v0.1.3
+Release date: 2025-09-20
+
+Minor tweaks:
+
+* config defaults to verbose = FALSE
+* load_nextgen_stats() argument order updated for consistency
+* summary_level arg in stats functions now a Literal type instead of a plain string 
+
 # nflreadpy v0.1.2
 Release date: 2025-09-15
 

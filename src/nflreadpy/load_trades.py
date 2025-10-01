@@ -2,7 +2,6 @@
 
 import polars as pl
 
-from .config import DataFormat
 from .downloader import get_downloader
 
 
@@ -22,7 +21,6 @@ def load_trades() -> pl.DataFrame:
     """
     downloader = get_downloader()
 
-    # Load trades data from nfldata repository (CSV format since RDS isn't readable)
-    df = downloader.download("nfldata", "trades", format=DataFormat.CSV)
+    df = downloader.download("nflverse-data", "trades/trades")
 
     return df

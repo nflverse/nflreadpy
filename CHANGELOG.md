@@ -1,6 +1,9 @@
 # nflreadpy (devel version)
 
-- load_teams() now points to nflverse-data@teams, which makes it consistent with nflreadr
+Changes:
+
+* load_teams() now points to nflverse-data@teams for compat with nflreadr (breaking change)
+* load_schedules() now points to nflverse-data@schedules to access parquet version of files (non-breaking change)
 
 ---
 

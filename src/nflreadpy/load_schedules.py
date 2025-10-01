@@ -2,7 +2,6 @@
 
 import polars as pl
 
-from .config import DataFormat
 from .downloader import get_downloader
 from .utils_date import get_current_season
 
@@ -27,8 +26,8 @@ def load_schedules(seasons: int | list[int] | bool | None = True) -> pl.DataFram
     """
     downloader = get_downloader()
 
-    # Load the full games dataset (default to CSV since we can't parse RDS)
-    df = downloader.download("nfldata", "games", format=DataFormat.CSV)
+    # Load the full games dataset
+    df = downloader.download("nflverse-data", "schedules/games")
 
     # Filter by seasons if specified
     if seasons is not True:

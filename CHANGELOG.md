@@ -3,7 +3,9 @@
 Changes:
 
 * load_teams() now points to nflverse-data@teams for compat with nflreadr (breaking change)
-* load_schedules() now points to nflverse-data@schedules to access parquet version of files (non-breaking change)
+* load_schedules() now points to nflverse-data@schedules to access parquet version of file
+* load_trades() now points to nflverse-data@trades to access parquet version of file
+
 
 ---
 

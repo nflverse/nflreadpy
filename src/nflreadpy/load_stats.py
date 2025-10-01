@@ -1,7 +1,8 @@
 """Load NFL player and team statistics."""
 
-import polars as pl
 from typing import Literal
+
+import polars as pl
 
 from .downloader import get_downloader
 from .utils_date import get_current_season
@@ -65,7 +66,7 @@ def _load_stats(
 
 def load_player_stats(
     seasons: int | list[int] | bool | None = None,
-    summary_level: Literal["week", "reg", "post", "reg+post"] = "week"
+    summary_level: Literal["week", "reg", "post", "reg+post"] = "week",
 ) -> pl.DataFrame:
     """
     Load NFL player statistics.
@@ -90,7 +91,7 @@ def load_player_stats(
 
 def load_team_stats(
     seasons: int | list[int] | bool | None = None,
-    summary_level: Literal["week", "reg", "post", "reg+post"] = "week"
+    summary_level: Literal["week", "reg", "post", "reg+post"] = "week",
 ) -> pl.DataFrame:
     """
     Load NFL team statistics.

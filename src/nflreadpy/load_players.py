@@ -14,8 +14,8 @@ def load_players() -> pl.DataFrame:
     (GSIS, PFR, PFF, OTC, ESB, ESPN).
 
     Returns:
-        Polars DataFrame with player data - one row per player with comprehensive
-        player information including names, physical stats, draft info, and
+        Polars DataFrame with player data - one row per player with comprehensive \
+        player information including names, physical stats, draft info, and \
         cross-platform ID mappings.
 
     See Also:

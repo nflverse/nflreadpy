@@ -18,7 +18,7 @@ def load_snap_counts(seasons: int | list[int] | bool | None = None) -> pl.DataFr
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with snap count data including player information,
+        Polars DataFrame with snap count data including player information,\
         offensive/defensive snaps, and snap percentages.
 
     See Also:

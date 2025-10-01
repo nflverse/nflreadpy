@@ -18,7 +18,7 @@ def load_officials(seasons: int | list[int] | bool | None = True) -> pl.DataFram
                 If None, loads current season.
 
     Returns:
-        Polars DataFrame with officials data including referee assignments,
+        Polars DataFrame with officials data including referee assignments,\
         crew information, and game details.
 
     See Also:

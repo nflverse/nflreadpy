@@ -18,7 +18,7 @@ def load_draft_picks(seasons: int | list[int] | bool | None = True) -> pl.DataFr
                 If None, loads current season.
 
     Returns:
-        Polars DataFrame with draft pick data including draft year, round,
+        Polars DataFrame with draft pick data including draft year, round,\
         pick number, player information, and team data.
 
     See Also:

@@ -134,6 +134,7 @@ def update_config(**kwargs: Any) -> None:
 
     Args:
         **kwargs: Configuration options to update. Valid options include:
+
             - cache_mode: "memory", "filesystem", or "off"
             - cache_dir: Path to cache directory (str or Path)
             - cache_duration: Cache duration in seconds (int)

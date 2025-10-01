@@ -2,7 +2,6 @@
 
 import polars as pl
 
-from .config import DataFormat
 from .downloader import get_downloader
 
 
@@ -11,7 +10,7 @@ def load_teams() -> pl.DataFrame:
     Load NFL team information.
 
     Returns:
-        Polars DataFrame with team data including abbreviations, names,
+        Polars DataFrame with team data including abbreviations, names,\
         colors, logos, and other team metadata.
 
     See Also:

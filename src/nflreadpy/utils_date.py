@@ -8,8 +8,9 @@ def get_current_season(roster: bool = False) -> int:
     Get the current NFL season year.
 
     Args:
-        roster: If True, uses roster year logic (current year after March 15).
-                If False, uses season logic (current year after Thursday following Labor Day).
+        roster:
+            - If True, uses roster year logic (current year after March 15).
+            - If False, uses season logic (current year after Thursday following Labor Day).
 
     Returns:
         The current season/roster year.

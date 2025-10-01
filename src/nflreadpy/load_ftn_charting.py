@@ -18,7 +18,7 @@ def load_ftn_charting(seasons: int | list[int] | bool | None = None) -> pl.DataF
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with FTN charting data including detailed
+        Polars DataFrame with FTN charting data including detailed\
         play-by-play charting information and advanced metrics.
 
     See Also:

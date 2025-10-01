@@ -18,7 +18,7 @@ def load_rosters_weekly(seasons: int | list[int] | bool | None = None) -> pl.Dat
                 If int or list of ints, loads specified season(s).
 
     Returns:
-        Polars DataFrame with weekly roster data including player status
+        Polars DataFrame with weekly roster data including player status\
         changes, injury designations, and week-by-week roster moves.
 
     See Also:

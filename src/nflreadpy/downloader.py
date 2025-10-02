@@ -16,7 +16,6 @@ class NflverseDownloader:
 
     BASE_URLS = {
         "nflverse-data": "https://github.com/nflverse/nflverse-data/releases/download/",
-        "nfldata": "https://github.com/nflverse/nfldata/raw/master/data/",
         "espnscraper": "https://github.com/nflverse/espnscrapeR-data/raw/master/data/",
         "dynastyprocess": "https://github.com/dynastyprocess/data/raw/master/files/",
         "ffopportunity": "https://github.com/ffverse/ffopportunity/releases/download/",

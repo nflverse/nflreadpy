@@ -123,7 +123,6 @@ The best places to get help on this package are:
 nflreadpy downloads data from the following nflverse repositories:
 
 - [nflverse-data](https://github.com/nflverse/nflverse-data) - Play-by-play, rosters, stats
-- [nfldata](https://github.com/nflverse/nfldata) - Schedules and game data
 - [dynastyprocess](https://github.com/dynastyprocess/data) - fantasy football data
 - [ffopportunity](https://github.com/ffverse/ffopportunity) - expected yards and fantasy points
 

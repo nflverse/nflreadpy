@@ -15,6 +15,7 @@ from ..analytics import Opportunity
 from ..dashboard import Dashboard
 from ..dashboard_core import (
     DashboardFilters,
+    LadderCell,
     is_half_scope,
     is_quarter_scope,
     normalize_scope,
@@ -569,7 +570,7 @@ def _lazy_polars():  # type: ignore[no-untyped-def]
     return pl
 
 
-def _ladder_frame(ladder: dict[str, dict[float, int]]) -> "pl.DataFrame":
+def _ladder_frame(ladder: dict[str, dict[float, LadderCell]]) -> "pl.DataFrame":
     pl = _lazy_polars()
     if not ladder:
         return pl.DataFrame(schema={"line": pl.Float64})
@@ -580,20 +581,23 @@ def _ladder_frame(ladder: dict[str, dict[float, int]]) -> "pl.DataFrame":
         row: dict[str, object] = {"line": line}
         best_scope = _best_scope_for_line(ladder, line)
         for scope in scopes:
-            row[scope] = ladder[scope].get(line)
+            cell = ladder[scope].get(line)
+            row[scope] = cell.summary() if isinstance(cell, LadderCell) else None
         row["best_scope"] = best_scope
         records.append(row)
     return pl.DataFrame(records)
 
 
-def _best_scope_for_line(ladder: dict[str, dict[float, int]], line: float) -> str | None:
+def _best_scope_for_line(
+    ladder: dict[str, dict[float, LadderCell]], line: float
+) -> str | None:
     best_scope: str | None = None
     best_price: float | None = None
     for scope, entries in ladder.items():
-        odds_value = entries.get(line)
-        if odds_value is None:
+        cell = entries.get(line)
+        if cell is None:
             continue
-        decimal = american_to_decimal(odds_value)
+        decimal = american_to_decimal(cell.american_odds)
         if best_price is None or decimal > best_price:
             best_price = decimal
             best_scope = scope

@@ -24,12 +24,11 @@ RowMapping = Mapping[str, Any]
 __all__ = [
     "BacktestArtifacts",
     "BacktestMetrics",
-    "QuantumComparisonArtifacts",
-    "QuantumScenarioComparison",
-    "ScenarioPerformance",
+    "comparison_performance_table",
     "Settlement",
     "SportsbookRules",
     "closing_line_table",
+    "load_comparison_history",
     "export_closing_line_report",
     "export_reliability_diagram",
     "get_sportsbook_rules",
@@ -359,432 +358,36 @@ def persist_backtest_reports(
     )
 
 
-def compare_quantum_backtest(
-    snapshots: pl.DataFrame,
-    *,
-    sportsbook_rules: Mapping[str, SportsbookRules] | None = None,
-    bankroll: float = 1_000.0,
-    max_risk_per_bet: float = 0.02,
-    max_event_exposure: float = 0.1,
-    portfolio_fraction: float = 1.0,
-    optimizer: "QuantumPortfolioOptimizer | None" = None,
-    optimizer_shots: int = 512,
-    optimizer_temperature: float = 0.6,
-    optimizer_seed: int | None = None,
-    bootstrap_iterations: int = 2_000,
-    bootstrap_seed: int | None = None,
-) -> QuantumScenarioComparison:
-    """Compare baseline and quantum-optimised staking on historical snapshots."""
+def load_comparison_history(path: str | Path) -> pl.DataFrame:
+    """Load persisted optimizer comparison allocations."""
 
-    settlements = list(
-        simulate_settlements(snapshots, sportsbook_rules=sportsbook_rules)
-    )
-    if not settlements:
-        raise ValueError("No settlements available for comparison")
-
-    opportunities = _snapshots_to_opportunities(snapshots)
-    if not opportunities:
-        raise ValueError("No opportunities available for quantum optimisation")
-
-    baseline_order = sorted(
-        opportunities, key=lambda opportunity: opportunity.expected_value, reverse=True
-    )
-    baseline_positions = _allocate_portfolio_positions(
-        baseline_order,
-        bankroll=bankroll,
-        max_risk_per_bet=max_risk_per_bet,
-        max_event_exposure=max_event_exposure,
-        portfolio_fraction=portfolio_fraction,
-    )
-    baseline_stakes = _positions_to_stake_map(baseline_positions)
-
-    if optimizer is None:
-        from .quantum import QuantumPortfolioOptimizer  # pragma: no cover - optional import
-
-        optimizer = QuantumPortfolioOptimizer(
-            shots=optimizer_shots,
-            temperature=optimizer_temperature,
-            seed=optimizer_seed,
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(target)
+    files: list[Path]
+    if target.is_file():
+        files = [target]
+    else:
+        files = sorted(
+            [
+                candidate
+                for candidate in target.rglob("*")
+                if candidate.suffix.lower() in {".csv", ".parquet"}
+            ]
         )
-
-    ranked = optimizer.optimise(opportunities)
-    quantum_order = [item[0] for item in ranked]
-    seen_ids = {id(opportunity) for opportunity in quantum_order}
-    quantum_order.extend(
-        opportunity for opportunity in opportunities if id(opportunity) not in seen_ids
-    )
-
-    quantum_positions = _allocate_portfolio_positions(
-        quantum_order,
-        bankroll=bankroll,
-        max_risk_per_bet=max_risk_per_bet,
-        max_event_exposure=max_event_exposure,
-        portfolio_fraction=portfolio_fraction,
-    )
-    quantum_stakes = _positions_to_stake_map(quantum_positions)
-
-    rows = list(snapshots.iter_rows(named=True))
-    baseline_perf = _scenario_performance(
-        "baseline",
-        rows,
-        settlements,
-        baseline_stakes,
-    )
-    quantum_perf = _scenario_performance(
-        "quantum",
-        rows,
-        settlements,
-        quantum_stakes,
-    )
-
-    profit_diffs = [
-        quantum - baseline
-        for baseline, quantum in zip(
-            baseline_perf.per_event_profits, quantum_perf.per_event_profits
-        )
-    ]
-    t_stat, t_p = _paired_t_test(
-        baseline_perf.per_event_profits, quantum_perf.per_event_profits
-    )
-    bootstrap_p = _bootstrap_p_value(
-        profit_diffs, iterations=bootstrap_iterations, seed=bootstrap_seed
-    )
-
-    return QuantumScenarioComparison(
-        baseline=baseline_perf,
-        quantum=quantum_perf,
-        delta_expected_value=quantum_perf.expected_value - baseline_perf.expected_value,
-        delta_hit_rate=quantum_perf.hit_rate - baseline_perf.hit_rate,
-        delta_max_drawdown=quantum_perf.max_drawdown - baseline_perf.max_drawdown,
-        profit_differences=profit_diffs,
-        t_statistic=t_stat,
-        t_p_value=t_p,
-        bootstrap_p_value=bootstrap_p,
-    )
-
-
-def persist_quantum_comparison(
-    comparison: QuantumScenarioComparison,
-    output_dir: str | Path,
-    *,
-    summary_filename: str = "summary.csv",
-    distribution_filename: str = "distribution.csv",
-    significance_filename: str = "significance.json",
-) -> QuantumComparisonArtifacts:
-    """Persist summary artefacts describing quantum optimisation impact."""
-
-    destination = Path(output_dir)
-    destination.mkdir(parents=True, exist_ok=True)
-
-    summary_records = [
-        {
-            "scenario": comparison.baseline.name,
-            "expected_value": comparison.baseline.expected_value,
-            "realized_pnl": comparison.baseline.realized_pnl,
-            "hit_rate": comparison.baseline.hit_rate,
-            "wins": comparison.baseline.wins,
-            "attempts": comparison.baseline.attempts,
-            "average_drawdown": comparison.baseline.average_drawdown,
-            "max_drawdown": comparison.baseline.max_drawdown,
-        },
-        {
-            "scenario": comparison.quantum.name,
-            "expected_value": comparison.quantum.expected_value,
-            "realized_pnl": comparison.quantum.realized_pnl,
-            "hit_rate": comparison.quantum.hit_rate,
-            "wins": comparison.quantum.wins,
-            "attempts": comparison.quantum.attempts,
-            "average_drawdown": comparison.quantum.average_drawdown,
-            "max_drawdown": comparison.quantum.max_drawdown,
-        },
-        {
-            "scenario": "delta",
-            "expected_value": comparison.delta_expected_value,
-            "realized_pnl": comparison.quantum.realized_pnl
-            - comparison.baseline.realized_pnl,
-            "hit_rate": comparison.delta_hit_rate,
-            "wins": comparison.quantum.wins - comparison.baseline.wins,
-            "attempts": comparison.quantum.attempts - comparison.baseline.attempts,
-            "average_drawdown": comparison.quantum.average_drawdown
-            - comparison.baseline.average_drawdown,
-            "max_drawdown": comparison.delta_max_drawdown,
-        },
-    ]
-    summary_path = destination / summary_filename
-    pl.DataFrame(summary_records).write_csv(summary_path)
-
-    distribution_records = []
-    for index, (baseline_profit, quantum_profit, diff) in enumerate(
-        zip(
-            comparison.baseline.per_event_profits,
-            comparison.quantum.per_event_profits,
-            comparison.profit_differences,
-        )
-    ):
-        distribution_records.append(
-            {
-                "event_index": index,
-                "scenario": comparison.baseline.name,
-                "profit": baseline_profit,
-            }
-        )
-        distribution_records.append(
-            {
-                "event_index": index,
-                "scenario": comparison.quantum.name,
-                "profit": quantum_profit,
-            }
-        )
-        distribution_records.append(
-            {
-                "event_index": index,
-                "scenario": "difference",
-                "profit": diff,
-            }
-        )
-    distribution_path = destination / distribution_filename
-    pl.DataFrame(distribution_records).write_csv(distribution_path)
-
-    significance_payload = {
-        "t_statistic": comparison.t_statistic,
-        "t_p_value": comparison.t_p_value,
-        "bootstrap_p_value": comparison.bootstrap_p_value,
-        "delta_expected_value": comparison.delta_expected_value,
-        "delta_hit_rate": comparison.delta_hit_rate,
-        "delta_max_drawdown": comparison.delta_max_drawdown,
-    }
-    significance_path = destination / significance_filename
-    significance_path.write_text(json.dumps(significance_payload, indent=2, sort_keys=True))
-
-    return QuantumComparisonArtifacts(
-        summary_path=summary_path,
-        distribution_path=distribution_path,
-        significance_path=significance_path,
-    )
-
-
-def _snapshots_to_opportunities(
-    snapshots: pl.DataFrame,
-) -> list["OpportunityType"]:
-    from .analytics import KellyCriterion, Opportunity
-
-    opportunities: list["OpportunityType"] = []
-    for row in snapshots.iter_rows(named=True):
-        price = int(row["american_odds"])
-        win_prob = float(row["model_probability"])
-        win_prob = max(0.0, min(1.0, win_prob))
-        loss_prob = max(0.0, 1.0 - win_prob)
-        expected_value = win_prob * _profit_multiplier(price) - loss_prob
-        kelly_fraction = KellyCriterion.fraction(
-            win_probability=win_prob,
-            loss_probability=loss_prob,
-            price=price,
-        )
-        side = row.get("side")
-        line = row.get("line")
-        snapshot_type = row.get("snapshot_type")
-        extra: dict[str, object] = {}
-        if snapshot_type is not None:
-            extra["snapshot_type"] = str(snapshot_type)
-        opportunities.append(
-            Opportunity(
-                event_id=str(row["event_id"]),
-                sportsbook=str(row["sportsbook"]),
-                book_market_group=str(row["book_market_group"]),
-                market=str(row["market"]),
-                scope=str(row["scope"]),
-                entity_type=str(row["entity_type"]),
-                team_or_player=str(row["team_or_player"]),
-                side=None if side is None else str(side),
-                line=None if line is None else float(line),
-                american_odds=price,
-                model_probability=win_prob,
-                push_probability=0.0,
-                implied_probability=_implied_probability(price),
-                expected_value=expected_value,
-                kelly_fraction=kelly_fraction,
-                extra=extra,
-            )
-        )
-    return opportunities
-
-
-def _allocate_portfolio_positions(
-    opportunities: Sequence["OpportunityType"],
-    *,
-    bankroll: float,
-    max_risk_per_bet: float,
-    max_event_exposure: float,
-    portfolio_fraction: float,
-) -> Sequence["PortfolioPositionType"]:
-    from .analytics import PortfolioManager
-
-    manager = PortfolioManager(
-        bankroll=bankroll,
-        max_risk_per_bet=max_risk_per_bet,
-        max_event_exposure=max_event_exposure,
-        fractional_kelly=portfolio_fraction,
-    )
-    for opportunity in opportunities:
-        manager.allocate(opportunity)
-    return tuple(manager.positions)
-
-
-def _positions_to_stake_map(
-    positions: Sequence["PortfolioPositionType"],
-) -> dict[tuple[str, str, str, str, str | None, float | None], float]:
-    stakes: dict[tuple[str, str, str, str, str | None, float | None], float] = {}
-    for position in positions:
-        opportunity = position.opportunity
-        key = (
-            opportunity.event_id,
-            opportunity.sportsbook,
-            opportunity.market,
-            opportunity.team_or_player,
-            opportunity.side,
-            opportunity.line,
-        )
-        stakes[key] = stakes.get(key, 0.0) + float(position.stake)
-    return stakes
-
-
-def _settlement_key(
-    settlement: Settlement,
-) -> tuple[str, str, str, str, str | None, float | None]:
-    return (
-        settlement.event_id,
-        settlement.sportsbook,
-        settlement.market,
-        settlement.team_or_player,
-        settlement.side,
-        settlement.line,
-    )
-
-
-def _scenario_performance(
-    name: str,
-    rows: Sequence[RowMapping],
-    settlements: Sequence[Settlement],
-    stake_map: Mapping[tuple[str, str, str, str, str | None, float | None], float],
-) -> ScenarioPerformance:
-    profits: list[float] = []
-    expected_values: list[float] = []
-    wins = 0
-    attempts = 0
-    cumulative = 0.0
-    peak = 0.0
-    max_drawdown = 0.0
-    drawdown_sum = 0.0
-    drawdown_count = 0
-
-    for row, settlement in zip(rows, settlements):
-        key = _settlement_key(settlement)
-        stake = float(stake_map.get(key, 0.0))
-        multiplier = _profit_multiplier(settlement.american_odds)
-        win_prob = float(row.get("model_probability", settlement.model_probability))
-        win_prob = max(0.0, min(1.0, win_prob))
-        loss_prob = max(0.0, 1.0 - win_prob)
-        expected_profit = stake * (win_prob * multiplier - loss_prob)
-        expected_values.append(expected_profit)
-
-        if stake <= 0.0:
-            profits.append(0.0)
-            continue
-
-        profit = _payout(settlement.american_odds, stake, settlement.outcome)
-        profits.append(profit)
-        cumulative += profit
-        if cumulative > peak:
-            peak = cumulative
-        if peak > 0.0:
-            drawdown = (peak - cumulative) / peak
-            drawdown_sum += drawdown
-            drawdown_count += 1
-            if drawdown > max_drawdown:
-                max_drawdown = drawdown
-        if settlement.outcome != "push":
-            attempts += 1
-            if settlement.outcome == "win":
-                wins += 1
-
-    realized_pnl = sum(profits)
-    expected_value = sum(expected_values)
-    average_drawdown = drawdown_sum / drawdown_count if drawdown_count else 0.0
-    hit_rate = wins / attempts if attempts else 0.0
-    return ScenarioPerformance(
-        name=name,
-        expected_value=expected_value,
-        realized_pnl=realized_pnl,
-        hit_rate=hit_rate,
-        wins=wins,
-        attempts=attempts,
-        average_drawdown=average_drawdown,
-        max_drawdown=max_drawdown,
-        per_event_profits=profits,
-        per_event_expected=expected_values,
-    )
-
-
-def _paired_t_test(
-    baseline: Sequence[float], quantum: Sequence[float]
-) -> tuple[float | None, float | None]:
-    if len(baseline) != len(quantum):
-        raise ValueError("Paired samples must have matching lengths")
-    if len(baseline) < 2:
-        return None, None
-    differences = [q - b for b, q in zip(baseline, quantum)]
-    mean_diff = statistics.mean(differences)
-    try:
-        stdev = statistics.stdev(differences)
-    except statistics.StatisticsError:
-        stdev = 0.0
-    if stdev == 0.0:
-        if math.isclose(mean_diff, 0.0, abs_tol=1e-12):
-            return 0.0, 1.0
-        return (math.copysign(math.inf, mean_diff), 0.0)
-    n = len(differences)
-    t_stat = mean_diff / (stdev / math.sqrt(n))
-    cdf = _student_t_cdf(abs(t_stat), n - 1)
-    p_value = max(0.0, min(1.0, 2.0 * (1.0 - cdf)))
-    return t_stat, p_value
-
-
-def _student_t_cdf(t_value: float, degrees_of_freedom: int) -> float:
-    if degrees_of_freedom <= 0:
-        raise ValueError("Degrees of freedom must be positive")
-    x = degrees_of_freedom / (degrees_of_freedom + t_value * t_value)
-    incomplete_beta = math.betainc(degrees_of_freedom / 2.0, 0.5, x)
-    return 1.0 - 0.5 * incomplete_beta
-
-
-def _bootstrap_p_value(
-    differences: Sequence[float],
-    *,
-    iterations: int = 2_000,
-    seed: int | None = None,
-) -> float | None:
-    if iterations <= 0:
-        return None
-    samples = list(differences)
-    if not samples:
-        return None
-    observed = statistics.mean(samples)
-    rng = random.Random(seed)
-    n = len(samples)
-    extreme = 0
-    for _ in range(iterations):
-        resample = [samples[rng.randrange(n)] for _ in range(n)]
-        if abs(statistics.mean(resample)) >= abs(observed):
-            extreme += 1
-    return min(1.0, (extreme + 1) / (iterations + 1))
-
-
-def _profit_multiplier(american_odds: int) -> float:
-    if american_odds == 0:
-        raise ValueError("American odds cannot be zero")
-    if american_odds > 0:
-        return american_odds / 100.0
-    return 100.0 / abs(american_odds)
+    if not files:
+        raise ValueError(f"No comparison artefacts found under {target}")
+    frames: list[pl.DataFrame] = []
+    for file in files:
+        if file.suffix.lower() == ".csv":
+            frames.append(pl.read_csv(file))
+        elif file.suffix.lower() == ".parquet":
+            frames.append(pl.read_parquet(file))
+        else:  # pragma: no cover - defensive branch
+            raise ValueError(f"Unsupported comparison format: {file.suffix}")
+    if len(frames) == 1:
+        return frames[0]
+    return pl.concat(frames, how="vertical_relaxed")
 
 
 def _settle_row(
@@ -1030,4 +633,54 @@ def settlements_to_frame(settlements: Sequence[Settlement]) -> pl.DataFrame:
     """Convert a collection of settlements into a Polars DataFrame."""
 
     return pl.DataFrame([dataclasses.asdict(item) for item in settlements])
+
+
+def comparison_performance_table(
+    settlements: Sequence[Settlement],
+    comparisons: pl.DataFrame,
+) -> pl.DataFrame:
+    """Augment comparison allocations with realised performance metrics."""
+
+    if comparisons.is_empty():
+        return comparisons
+    join_keys = [
+        "event_id",
+        "sportsbook",
+        "team_or_player",
+        "market",
+        "scope",
+        "side",
+        "line",
+        "american_odds",
+    ]
+    settlements_frame = settlements_to_frame(settlements)
+    if settlements_frame.is_empty():
+        joined = comparisons.with_columns(
+            pl.lit(None).alias("stake"),
+            pl.lit(None).alias("pnl"),
+        )
+    else:
+        joined = comparisons.join(
+            settlements_frame,
+            on=join_keys,
+            how="left",
+            suffix="_settlement",
+        )
+    safe = joined.with_columns(
+        pl.col("allocation_stake").fill_null(0.0),
+        pl.col("expected_value").fill_null(0.0),
+        pl.col("stake").fill_null(0.0),
+        pl.col("pnl").fill_null(0.0),
+    )
+    with_returns = safe.with_columns(
+        pl.when(pl.col("stake") != 0.0)
+        .then(pl.col("pnl") / pl.col("stake"))
+        .otherwise(0.0)
+        .alias("pnl_per_unit"),
+    )
+    enriched = with_returns.with_columns(
+        (pl.col("allocation_stake") * pl.col("expected_value")).alias("expected_pnl"),
+        (pl.col("allocation_stake") * pl.col("pnl_per_unit")).alias("realized_pnl"),
+    )
+    return enriched
 

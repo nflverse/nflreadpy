@@ -9,6 +9,7 @@ from nflreadpy.betting.dashboard_core import (
     DEFAULT_SEARCH_TARGETS,
     DashboardFilters,
     build_ladder_matrix,
+    LadderCell,
     is_half_scope,
     is_quarter_scope,
     normalize_scope,
@@ -47,7 +48,10 @@ def test_build_ladder_matrix_orders_lines(sample_quote: IngestedOdds) -> None:
     key = (quote_with_line.event_id, quote_with_line.market, quote_with_line.team_or_player)
     assert key in ladder
     scope_key = normalize_scope("1st Half")
-    assert ladder[key][scope_key][-2.5] == -110
+    cell = ladder[key][scope_key][-2.5]
+    assert isinstance(cell, LadderCell)
+    assert cell.american_odds == -110
+    assert cell.probability is None
 
 
 @pytest.fixture

@@ -103,6 +103,8 @@ uv sync --dev
 
 # Run tests
 uv run pytest
+# Property-based tests powered by Hypothesis are included in the suite and
+# typically finish in under 30 seconds on a modern developer laptop.
 
 # Format code
 uv run ruff format

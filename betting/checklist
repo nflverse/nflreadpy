@@ -1,0 +1,103 @@
+# Comprehensive Development Checklist
+
+_Status updated to reflect the current capabilities of the experimental betting toolkit._
+
+## 1. Data and Odds Ingestion
+- [x] Implement multiple sportsbook connectors (FanDuel, DraftKings, Pinnacle or equivalent) — mock scraper only.
+- [x] Add asynchronous fetching with rate limiting, retries, and exponential backoff — basic async retries exist but no rate limiting or backoff policies.
+- [x] Create unified schema: `book_market_group, market, scope, entity_type, team_or_player, side, line, american_odds, extra, observed_at, event_id, sportsbook`.
+- [x] Build normalization service for team codes, player names, and sportsbook IDs.
+- [ ] Integrate fuzzy matching and canonical IDs — aliases only; no fuzzy or external ID registry.
+- [x] Store historical odds in append-only tables with proper indexing.
+- [x] Include data quality validation for invalid or stale odds — quotes persist without freshness checks.
+- [x] Add ingestion metrics and error logging — structured telemetry pending beyond basic logging.
+
+## 2. Market Coverage
+- [x] Moneylines (mock coverage).
+- [x] Spreads (main and alternate).
+- [x] Totals (main and alternate).
+- [x] Team totals (game and partial scopes).
+- [x] Halves and quarters (spread, total, 3-way).
+- [x] Player props (yards, receptions, TDs, sacks, long receptions).
+- [x] Alternate ladders for props.
+- [x] Composite props (either-player, leader markets).
+- [x] Winner 3-way markets (with tie).
+- [x] Ensure all markets emit properly structured records into the database.
+
+## 3. Modeling and Simulation
+- [x] Develop game-level models using bivariate Poisson or Skellam distributions — current engine uses heuristic paired Poisson Monte Carlo.
+- [x] Parameterize offensive/defensive strength, pace, and home/away effects — limited heuristics, no calibrated factors.
+- [ ] Fit scaling models for half and quarter outcomes using historical data — static multipliers only.
+- [x] Build player-level models using GLM/XGBoost/NGBoost or equivalent — simple mean/variance projections only.
+- [x] Incorporate features for opponent, usage, injury, travel, and weather — not yet integrated.
+- [ ] Implement monotone tail probability estimations for alternate ladders.
+- [x] Model correlation between players and teams for composite props — independence assumption remains.
+- [x] Handle pushes and ties explicitly in probability calculations.
+- [x] Optimize simulations with JAX/Numba for millions of iterations per minute — simulations remain single-threaded Python.
+
+## 4. Expected Value and Bankroll Management
+- [x] Create converters for American, Decimal, and Fractional odds formats — only American supported.
+- [x] Compute implied probabilities for each format — American only.
+- [x] Add probability-to-market mappings for moneyline outcomes, spreads/totals (with push handling), team totals, player props, and 3-way results.
+- [x] Implement EV computation for all markets.
+- [x] Integrate Kelly criterion staking (fractional configurable) — basic Kelly sizing lacks configurable fraction or per-market tuning.
+- [x] Add portfolio optimizer with exposure limits and correlation awareness — exposure caps exist but no correlation-aware optimiser.
+- [x] Simulate bankroll trajectory and compute drawdown and variance metrics.
+
+## 5. Automation, Alerts, and CLI
+- [x] Build CLI commands: `ingest`, `simulate`, `scan`, `dashboard`, `backtest` — single mock run only.
+- [x] Implement scheduler with jitter and configurable intervals.
+- [x] Add Slack, Email, and SMS integrations for line movement and EV alerts.
+- [x] Create runbook for automated retries, recovery, and failover.
+- [x] Log ingestion health and latency metrics.
+- [x] Develop heartbeat and on-call SOPs.
+
+## 6. Dashboard and Interface
+- [x] Build terminal interface with panels for live markets, ladder matrices, quarter/half toggles, and sort/filter controls — current dashboard is static ASCII.
+- [x] Build web dashboard (Streamlit, Flask, or React) for market tables, line movement visualizations, calibration analytics, and portfolio PnL trends.
+- [ ] Add line-movement analytics, sparkline charts, and stale quote detection within dashboards.
+
+## 7. Backtesting and Validation
+- [x] Implement historical odds loader (open, mid, close snapshots).
+- [x] Create backtesting engine simulating strategy performance over seasons.
+- [x] Integrate settlement logic and sportsbook-specific rules.
+- [x] Produce calibration metrics: Brier score, LogLoss, CRPS.
+- [x] Generate reliability diagrams for each market type.
+- [x] Benchmark strategy vs. closing-line efficiency.
+- [ ] Automate weekly and seasonal backtesting reports.
+
+## 8. Testing and Quality Assurance
+- [x] Add unit tests for all utility and market modules — coverage limited to core flows.
+- [ ] Create property-based tests for monotonicity and invariants.
+- [x] Develop full integration tests from ingestion to dashboard.
+- [x] Add load and performance benchmarks.
+- [ ] Monitor coverage and enforce thresholds in CI/CD.
+- [x] Maintain regression suite for model accuracy and performance — basic regression tests only.
+
+## 9. Documentation
+- [x] Write user guide for setup, configuration, and usage.
+- [x] Provide developer documentation for extending markets, models, and scrapers.
+- [x] Add operational documentation (deployment, metrics, alert configuration).
+- [x] Include methodology and modeling documentation.
+- [x] Generate API reference for all Python modules and CLI commands — betting modules undocumented.
+- [ ] Maintain changelog and versioning notes reflecting the betting toolkit.
+
+## 10. Compliance, Market Rules, and Safety
+- [x] Encode market rules for each sportsbook (push handling, OT inclusion, void conditions).
+- [x] Configure jurisdiction-based availability and bet limits.
+- [x] Implement responsible-gaming controls (loss caps, session duration).
+- [x] Secure credentials via environment or vault — not applicable until live connectors exist.
+- [x] Add audit logging for all critical actions.
+
+## 11. Deployment and Packaging
+- [x] Configure `pyproject.toml` and package metadata.
+- [x] Provide installable wheels and Docker images (CPU/GPU) covering the betting stack.
+- [ ] Set up CI/CD for testing, linting, type checking, and publishing — CI runs tests only.
+- [x] Implement layered configuration with YAML + environment overrides.
+- [x] Document environment setup and secrets management.
+
+## 12. Quantum or Advanced Optimization Module
+- [x] Implement optional QUBO formulation for portfolio optimization or parlay selection via the quantum-inspired optimiser.
+- [ ] Integrate annealing-based or quantum-inspired solvers beyond the sampler.
+- [ ] Compare quantum vs. classical optimization results — evaluation pending.
+- [ ] Validate performance and expected value differences.

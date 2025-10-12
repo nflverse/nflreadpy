@@ -6,7 +6,16 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Tuple,
+)
 
 import yaml
 from pydantic import BaseModel, Field
@@ -20,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from .analytics import EdgeDetector
     from .ingestion import OddsIngestionService
     from .scrapers.base import SportsbookScraper
+    from .quantum import PortfolioOptimizer
 
 
 class ScraperRuntimeConfig(BaseModel):
@@ -66,6 +76,21 @@ class IterationConfig(BaseModel):
     backtest: int = 8_000
 
 
+class ScopeScalingConfig(BaseModel):
+    """Configuration for loading or overriding scope scaling parameters."""
+
+    parameters_path: str | None = None
+    fallback_factors: Dict[str, float] = Field(default_factory=dict)
+    overrides: Dict[str, float] = Field(default_factory=dict)
+    seasonal_overrides: Dict[int, Dict[str, float]] = Field(default_factory=dict)
+
+
+class ModelsConfig(BaseModel):
+    """Configuration namespace for statistical models."""
+
+    scope_scaling: ScopeScalingConfig = Field(default_factory=ScopeScalingConfig)
+
+
 class AnalyticsConfig(BaseModel):
     """Controls for downstream analytics heuristics and defaults."""
 
@@ -81,6 +106,22 @@ class AnalyticsConfig(BaseModel):
     history_limit: int = 256
     movement_threshold: int = 30
     iterations: IterationConfig = Field(default_factory=IterationConfig)
+    optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
+
+
+class FuzzyMatchingConfig(BaseModel):
+    """Feature flag and score thresholds for fuzzy identifier resolution."""
+
+    enabled: bool = False
+    score_thresholds: Dict[str, float] = Field(default_factory=dict)
+    ambiguity_margin: float = 5.0
+
+
+class NormalizationConfig(BaseModel):
+    """Controls for canonical identifier loading and fuzzy resolution."""
+
+    canonical_identifiers_path: str | None = "config/identifiers/betting_entities.json"
+    fuzzy: FuzzyMatchingConfig = Field(default_factory=FuzzyMatchingConfig)
 
 
 class BettingConfig(BaseModel):
@@ -89,7 +130,9 @@ class BettingConfig(BaseModel):
     environment: str = "default"
     scrapers: list[ScraperConfig] = Field(default_factory=list)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+    normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 
 
 class ConfigurationError(ValueError):
@@ -292,9 +335,53 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
     if analytics.movement_threshold < 0:
         errors.append("analytics.movement_threshold must be non-negative")
 
+    optimizer_cfg = analytics.optimizer
+    if optimizer_cfg.risk_aversion < 0:
+        errors.append("analytics.optimizer.risk_aversion must be non-negative")
+    if optimizer_cfg.shots <= 0:
+        errors.append("analytics.optimizer.shots must be greater than zero")
+    if optimizer_cfg.temperature <= 0:
+        errors.append("analytics.optimizer.temperature must be greater than zero")
+    if optimizer_cfg.annealing_steps <= 0:
+        errors.append("analytics.optimizer.annealing_steps must be greater than zero")
+    if optimizer_cfg.annealing_initial_temp <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_initial_temp must be greater than zero"
+        )
+    if optimizer_cfg.annealing_cooling_rate <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_cooling_rate must be greater than zero"
+        )
+    if optimizer_cfg.qaoa_layers <= 0:
+        errors.append("analytics.optimizer.qaoa_layers must be greater than zero")
+    if optimizer_cfg.qaoa_gamma < 0:
+        errors.append("analytics.optimizer.qaoa_gamma must be non-negative")
+    if optimizer_cfg.qaoa_beta < 0:
+        errors.append("analytics.optimizer.qaoa_beta must be non-negative")
+
     for name, value in analytics.iterations.model_dump().items():
         if value <= 0:
             errors.append(f"analytics.iterations.{name} must be greater than zero")
+
+    normalization = config.normalization
+    if normalization.canonical_identifiers_path is not None and not str(
+        normalization.canonical_identifiers_path
+    ).strip():
+        errors.append("normalization.canonical_identifiers_path cannot be empty")
+    fuzzy = normalization.fuzzy
+    if fuzzy.ambiguity_margin < 0:
+        errors.append("normalization.fuzzy.ambiguity_margin must be non-negative")
+    for domain, threshold in fuzzy.score_thresholds.items():
+        if threshold < 0 or threshold > 100:
+            errors.append(
+                "normalization.fuzzy.score_thresholds." +
+                f"{domain} must be between 0 and 100"
+            )
+    if fuzzy.enabled and not fuzzy.score_thresholds:
+        warnings.append(
+            "normalization.fuzzy.enabled is true but no score thresholds are defined; "
+            "default thresholds will be used"
+        )
 
     if errors:
         bullet_list = "\n".join(f"- {message}" for message in errors)
@@ -371,18 +458,64 @@ def create_edge_detector(
     )
 
 
+def load_scope_scaling_model(
+    config: BettingConfig,
+    *,
+    base_path: str | os.PathLike[str] | None = None,
+) -> "ScopeScalingModel":
+    """Load the scope scaling model referenced by configuration."""
+
+    from .scope_scaling import ScopeScalingModel
+
+    scope_cfg = config.models.scope_scaling
+    baseline = dict(ScopeScalingModel.DEFAULT_FACTORS)
+    for key, value in scope_cfg.fallback_factors.items():
+        baseline[ScopeScalingModel.canonical_scope(key)] = float(value)
+
+    parameters_path = scope_cfg.parameters_path
+    resolved_path: Path | None = None
+    if parameters_path:
+        candidate = Path(parameters_path)
+        if not candidate.is_absolute() and base_path is not None:
+            base_root = Path(base_path)
+            if base_root.is_file():
+                base_root = base_root.parent
+            candidate = base_root / candidate
+        resolved_path = candidate
+
+    model: ScopeScalingModel
+    if resolved_path and resolved_path.exists():
+        model = ScopeScalingModel.load(resolved_path, default_factors=baseline)
+    else:
+        model = ScopeScalingModel(base_factors=baseline, default_factors=baseline)
+
+    if scope_cfg.overrides:
+        model = model.with_overrides(scope_cfg.overrides)
+
+    if scope_cfg.seasonal_overrides:
+        for season, overrides in scope_cfg.seasonal_overrides.items():
+            model = model.with_overrides(overrides, season=int(season))
+
+    return model
+
+
 __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
     "ConfigurationError",
+    "FuzzyMatchingConfig",
     "IngestionConfig",
     "IterationConfig",
+    "NormalizationConfig",
     "SchedulerConfig",
+    "ScopeScalingConfig",
     "ScraperConfig",
     "ScraperRuntimeConfig",
+    "load_scope_scaling_model",
     "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",
+    "create_portfolio_optimizer",
     "create_scrapers_from_config",
     "load_betting_config",
 ]

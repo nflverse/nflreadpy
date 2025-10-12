@@ -17,6 +17,7 @@ from .dashboard_core import (
     DEFAULT_SEARCH_TARGETS,
     DashboardContext,
     DashboardFilters,
+    LadderCell,
     DashboardPanelState,
     DashboardPanelView,
     DashboardSearchState,
@@ -395,6 +396,30 @@ class Dashboard:
             lines.append("Correlation limits:")
             for group, fraction in sorted(summary.correlation_limits.items()):
                 lines.append(f"  {group}: {fraction:.2%} of bankroll")
+        comparison = summary.optimizer_comparison
+        if comparison is not None:
+            lines.append("Optimizer comparison metrics:")
+            lines.append(
+                "  EV diff (classical - quantum): "
+                f"{comparison.expected_value_difference:,.4f}"
+            )
+            lines.append(
+                "  Stake overlap: "
+                f"{comparison.overlap_fraction:.2%}"
+                f" ({comparison.overlapping_opportunities} shared)"
+            )
+            classical_sharpe = (
+                f"{comparison.classical.sharpe_like:.3f}"
+                if comparison.classical.sharpe_like is not None
+                else "N/A"
+            )
+            quantum_sharpe = (
+                f"{comparison.quantum.sharpe_like:.3f}"
+                if comparison.quantum.sharpe_like is not None
+                else "N/A"
+            )
+            lines.append(f"  Classical Sharpe-like: {classical_sharpe}")
+            lines.append(f"  Quantum Sharpe-like:    {quantum_sharpe}")
         metrics = summary.bankroll_summary
         if metrics is None and summary.simulation:
             metrics = summary.simulation.summary()
@@ -418,19 +443,21 @@ class Dashboard:
         for (event_id, market, selection), ladder in ladders.items():
             scopes = sorted(ladder.keys())
             sections.append(f"{event_id} · {market} · {selection}")
-            header = "Line  " + "".join(f"{scope:>9}" for scope in scopes) + "  Best"
+            cell_width = 14
+            header = "Line  " + "".join(f"{scope:>{cell_width}}" for scope in scopes) + "  Best"
             sections.append(header)
             lines = sorted({line for entries in ladder.values() for line in entries})
             for line_value in lines:
                 row = f"{line_value:>5.1f} "
                 best_scope = self._best_scope_for_line(ladder, line_value)
                 for scope in scopes:
-                    odds_value = ladder[scope].get(line_value)
-                    if odds_value is None:
-                        row += " " * 9
+                    cell = ladder[scope].get(line_value)
+                    if cell is None:
+                        row += " " * cell_width
                         continue
                     marker = "*" if scope == best_scope else " "
-                    row += f"{marker}{odds_value:>8}"
+                    display = cell.summary()
+                    row += f"{marker}{display:>{cell_width - 1}}"
                 row += f"  {best_scope or '-'}"
                 sections.append(row.rstrip())
             sections.append("")
@@ -438,15 +465,15 @@ class Dashboard:
 
     @staticmethod
     def _best_scope_for_line(
-        ladder: dict[str, dict[float, int]], line_value: float
+        ladder: dict[str, dict[float, LadderCell]], line_value: float
     ) -> str | None:
         best_scope: str | None = None
         best_price: float | None = None
         for scope, entries in ladder.items():
-            odds_value = entries.get(line_value)
-            if odds_value is None:
+            cell = entries.get(line_value)
+            if cell is None:
                 continue
-            decimal = american_to_decimal(odds_value)
+            decimal = american_to_decimal(cell.american_odds)
             if best_price is None or decimal > best_price:
                 best_price = decimal
                 best_scope = scope

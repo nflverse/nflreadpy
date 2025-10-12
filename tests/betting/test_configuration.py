@@ -1,5 +1,8 @@
 from __future__ import annotations
+
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -120,4 +123,26 @@ def test_validate_configuration_emits_warnings() -> None:
     tweaked = config.model_copy(update={"analytics": tweaked_analytics})
     warnings = validate_betting_config(tweaked)
     assert warnings, "expected warnings for very low value threshold"
+
+
+def test_validate_config_cli(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    config_path = repo_root / "config" / "betting.yaml"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nflreadpy.betting.cli",
+            "validate-config",
+            "--config",
+            str(config_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        env={**os.environ, "DATA_DIR": str(tmp_path)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Configuration" in result.stdout
 

@@ -133,3 +133,11 @@ exclude_lines = [
     "if 0:",
     "if __name__ == .__main__.:",
 ]
+
+[tool.nflreadpy.alerts]
+enabled = false
+slack_webhook = ""
+email_sender = "alerts@example.com"
+email_recipients = ["ops@example.com"]
+sms_numbers = []
+jitter_seconds = 0.0

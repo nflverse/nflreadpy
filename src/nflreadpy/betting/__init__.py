@@ -11,6 +11,13 @@ or swap components – for example, by registering new scrapers or
 specialised simulation models – without rewriting the rest of the stack.
 """
 
+from .alerts import (
+    AlertManager,
+    EmailAlertSink,
+    SMSAlertSink,
+    SlackAlertSink,
+    get_alert_manager,
+)
 from .analytics import (
     EdgeDetector,
     KellyCriterion,
@@ -36,6 +43,7 @@ from .models import (
 )
 from .normalization import NameNormalizer
 from .quantum import QuantumPortfolioOptimizer
+from .scheduler import Scheduler
 from .scrapers.base import (
     MultiScraperCoordinator,
     OddsQuote,
@@ -45,11 +53,13 @@ from .scrapers.base import (
 from .scrapers.mock import MockSportsbookScraper
 
 __all__ = [
+    "AlertManager",
     "Dashboard",
     "ComplianceConfig",
     "ComplianceEngine",
     "EdgeDetector",
     "GameSimulationConfig",
+    "EmailAlertSink",
     "KellyCriterion",
     "LineMovementAnalyzer",
     "MockSportsbookScraper",
@@ -64,9 +74,12 @@ __all__ = [
     "PlayerProjection",
     "QuantumPortfolioOptimizer",
     "ProbabilityTriple",
-    "ResponsibleGamingControls",
+    "SMSAlertSink",
+    "Scheduler",
     "SimulationResult",
     "SportsbookScraper",
+    "SlackAlertSink",
     "best_prices_by_selection",
+    "get_alert_manager",
     "consolidate_best_prices",
 ]

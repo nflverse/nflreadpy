@@ -19,6 +19,7 @@ from .alerts import (
     get_alert_manager,
 )
 from .analytics import (
+    BankrollSimulationResult,
     EdgeDetector,
     KellyCriterion,
     LineMovementAnalyzer,
@@ -53,7 +54,16 @@ from .scrapers.base import (
     MultiScraperCoordinator,
     OddsQuote,
     SportsbookScraper,
+    american_to_decimal,
+    american_to_fractional,
+    american_to_profit_multiplier,
     best_prices_by_selection,
+    decimal_to_american,
+    decimal_to_fractional,
+    fractional_to_american,
+    fractional_to_decimal,
+    implied_probability_from_decimal,
+    implied_probability_from_fractional,
 )
 from .scrapers.mock import MockSportsbookScraper
 
@@ -75,10 +85,12 @@ __all__ = [
     "NGBoostPlayerModel",
     "MultiScraperCoordinator",
     "NameNormalizer",
+    "RiskSummary",
     "OddsIngestionService",
     "OddsQuote",
     "Opportunity",
     "PortfolioManager",
+    "BankrollSimulationResult",
     "PlayerPropForecaster",
     "PlayerProjection",
     "QuantumPortfolioOptimizer",
@@ -91,6 +103,12 @@ __all__ = [
     "SlackAlertSink",
     "XGBoostPlayerModel",
     "best_prices_by_selection",
+    "decimal_to_american",
+    "decimal_to_fractional",
+    "fractional_to_american",
+    "fractional_to_decimal",
     "get_alert_manager",
+    "implied_probability_from_decimal",
+    "implied_probability_from_fractional",
     "consolidate_best_prices",
 ]

@@ -11,9 +11,9 @@ import dataclasses
 import datetime as dt
 import shlex
 from collections import defaultdict
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence, Tuple
 
-from .analytics import Opportunity
+from .analytics import BankrollSimulationResult, Opportunity, PortfolioPosition
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 
@@ -196,6 +196,7 @@ class Dashboard:
             "simulations",
             "quotes",
             "opportunities",
+            "risk",
             "ladders",
             "search",
         ]
@@ -204,6 +205,7 @@ class Dashboard:
             "simulations": DashboardPanelState("simulations", "Simulations"),
             "quotes": DashboardPanelState("quotes", "Latest Quotes"),
             "opportunities": DashboardPanelState("opportunities", "Opportunities"),
+            "risk": DashboardPanelState("risk", "Risk Management"),
             "ladders": DashboardPanelState("ladders", "Line Ladders"),
             "search": DashboardPanelState("search", "Search Results"),
         }
@@ -275,6 +277,8 @@ class Dashboard:
         odds: Sequence[IngestedOdds],
         simulations: Sequence[SimulationResult],
         opportunities: Sequence[Opportunity],
+        *,
+        risk_summary: RiskSummary | None = None,
     ) -> str:
         now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
         header = [f"NFL Terminal — {now}", "=" * 96]
@@ -389,6 +393,64 @@ class Dashboard:
                 f"{opp.event_id:<10}{opp.market:<12}{opp.scope:<6}{selection:<20}{opp.american_odds:>6}"
                 f"{opp.model_probability:>8.2%}{opp.push_probability:>7.2%}{opp.implied_probability:>8.2%}"
                 f"{opp.expected_value:>7.2%}{opp.kelly_fraction:>8.2%}{line_display}"
+            )
+        return "\n".join(lines)
+
+    def _render_risk(self, context: DashboardContext) -> str:
+        summary = context.risk_summary
+        if summary is None:
+            return "Risk analytics unavailable."
+        lines = [
+            f"Configured bankroll: {summary.bankroll:,.2f} units",
+            f"Opportunity Kelly fraction: {summary.opportunity_fraction:.2f}",
+            f"Portfolio Kelly fraction: {summary.portfolio_fraction:.2f}",
+        ]
+        positions = summary.positions
+        if not positions:
+            lines.append("No active positions.")
+        else:
+            total_stake = sum(position.stake for position in positions)
+            lines.append(
+                f"Open positions: {len(positions)} | Total stake: {total_stake:,.2f}"
+            )
+            for position in positions[:5]:
+                opp = position.opportunity
+                lines.append(
+                    f"  {opp.event_id} {opp.market} {opp.team_or_player}"
+                    f" @ {opp.american_odds:+d} stake={position.stake:.2f}"
+                )
+            if len(positions) > 5:
+                lines.append(f"  … {len(positions) - 5} additional positions")
+        exposure = summary.exposure_by_event
+        if exposure:
+            lines.append("Event exposure:")
+            for key, stake in sorted(exposure.items()):
+                fraction = (stake / summary.bankroll) if summary.bankroll else 0.0
+                lines.append(
+                    f"  {key[0]} {key[1]} -> {stake:,.2f} ({fraction:.2%} of bankroll)"
+                )
+        correlation = summary.correlation_exposure
+        if correlation:
+            lines.append("Correlation exposure:")
+            for group, stake in sorted(correlation.items()):
+                fraction = (stake / summary.bankroll) if summary.bankroll else 0.0
+                lines.append(f"  {group}: {stake:,.2f} ({fraction:.2%})")
+        if summary.simulation:
+            metrics = summary.simulation.summary()
+            lines.append("Simulation drawdowns:")
+            lines.append(f"  Trials: {int(metrics['trials'])}")
+            lines.append(f"  Mean terminal: {metrics['mean_terminal']:.2f}")
+            lines.append(f"  Median terminal: {metrics['median_terminal']:.2f}")
+            lines.append(f"  Worst terminal: {metrics['worst_terminal']:.2f}")
+            lines.append(
+                f"  Average drawdown: {metrics['average_drawdown']:.2%}"
+            )
+            lines.append(f"  Worst drawdown: {metrics['worst_drawdown']:.2%}")
+            lines.append(
+                f"  5th percentile drawdown: {metrics['p05_drawdown']:.2%}"
+            )
+            lines.append(
+                f"  95th percentile drawdown: {metrics['p95_drawdown']:.2%}"
             )
         return "\n".join(lines)
 

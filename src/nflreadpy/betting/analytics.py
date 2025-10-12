@@ -17,7 +17,11 @@ from .models import (
     SimulationBenchmark,
     SimulationResult,
 )
-from .scrapers.base import OddsQuote, best_prices_by_selection
+from .scrapers.base import (
+    OddsQuote,
+    american_to_profit_multiplier,
+    best_prices_by_selection,
+)
 
 try:  # pragma: no cover - optional import for type checking
     from .ingestion import IngestedOdds
@@ -51,14 +55,25 @@ class KellyCriterion:
     """Utility for computing fractional Kelly bet sizes."""
 
     @staticmethod
-    def fraction(win_probability: float, loss_probability: float, price: int) -> float:
+    def fraction(
+        win_probability: float,
+        loss_probability: float,
+        price: int,
+        *,
+        fractional_kelly: float = 1.0,
+        cap: float | None = None,
+    ) -> float:
         if price == 0:
             raise ValueError("American odds cannot be zero")
         b = price / 100.0 if price > 0 else 100.0 / -price
         numerator = b * win_probability - loss_probability
         if numerator <= 0:
             return 0.0
-        return numerator / b
+        kelly = numerator / b
+        scaled = max(0.0, kelly) * max(0.0, fractional_kelly)
+        if cap is not None:
+            scaled = min(cap, scaled)
+        return scaled
 
 
 class EdgeDetector:
@@ -441,6 +456,89 @@ class PortfolioPosition:
     stake: float
 
 
+@dataclasses.dataclass(slots=True)
+class BankrollTrajectory:
+    balances: List[float]
+
+    @property
+    def terminal_balance(self) -> float:
+        return self.balances[-1]
+
+    @property
+    def max_drawdown(self) -> float:
+        peak = -math.inf
+        max_dd = 0.0
+        for balance in self.balances:
+            peak = max(peak, balance) if peak != -math.inf else balance
+            if peak <= 0:
+                continue
+            drawdown = (peak - balance) / peak
+            if drawdown > max_dd:
+                max_dd = drawdown
+        return max_dd
+
+
+@dataclasses.dataclass(slots=True)
+class BankrollSimulationResult:
+    trajectories: List[BankrollTrajectory]
+
+    @property
+    def trials(self) -> int:
+        return len(self.trajectories)
+
+    @property
+    def terminal_balances(self) -> List[float]:
+        return [trajectory.terminal_balance for trajectory in self.trajectories]
+
+    @property
+    def max_drawdowns(self) -> List[float]:
+        return [trajectory.max_drawdown for trajectory in self.trajectories]
+
+    def summary(self) -> Mapping[str, float]:
+        if not self.trajectories:
+            return {
+                "trials": 0.0,
+                "mean_terminal": 0.0,
+                "median_terminal": 0.0,
+                "worst_terminal": 0.0,
+                "average_drawdown": 0.0,
+                "worst_drawdown": 0.0,
+                "p05_drawdown": 0.0,
+                "p95_drawdown": 0.0,
+            }
+        terminals = self.terminal_balances
+        drawdowns = self.max_drawdowns
+        return {
+            "trials": float(self.trials),
+            "mean_terminal": statistics.mean(terminals),
+            "median_terminal": statistics.median(terminals),
+            "worst_terminal": min(terminals),
+            "average_drawdown": statistics.mean(drawdowns) if drawdowns else 0.0,
+            "worst_drawdown": max(drawdowns) if drawdowns else 0.0,
+            "p05_drawdown": _percentile(drawdowns, 0.05),
+            "p95_drawdown": _percentile(drawdowns, 0.95),
+        }
+
+
+def _percentile(values: Iterable[float], percentile: float) -> float:
+    data = sorted(values)
+    if not data:
+        return 0.0
+    if percentile <= 0:
+        return data[0]
+    if percentile >= 1:
+        return data[-1]
+    index = (len(data) - 1) * percentile
+    lower = math.floor(index)
+    upper = math.ceil(index)
+    if lower == upper:
+        return data[int(index)]
+    lower_value = data[lower]
+    upper_value = data[upper]
+    weight = index - lower
+    return lower_value + (upper_value - lower_value) * weight
+
+
 class PortfolioManager:
     """Risk-aware staking engine with exposure caps."""
 
@@ -452,6 +550,10 @@ class PortfolioManager:
         compliance_engine: ComplianceEngine | None = None,
         responsible_gaming: ResponsibleGamingControls | None = None,
         audit_logger: logging.Logger | None = None,
+        *,
+        fractional_kelly: float = 1.0,
+        correlation_limits: Mapping[str, float] | None = None,
+        correlation_key: Callable[[Opportunity], str | None] | None = None,
     ) -> None:
         self.bankroll = bankroll
         self.max_risk_per_bet = max_risk_per_bet
@@ -464,6 +566,9 @@ class PortfolioManager:
         self._session_start_bankroll = bankroll
         self._total_session_stake = 0.0
         self._cooldown_until: dt.datetime | None = None
+        self.fractional_kelly = max(0.0, fractional_kelly)
+        self._correlation_limits = dict(correlation_limits or {})
+        self._correlation_key = correlation_key or self._default_correlation_key
 
     def allocate(self, opportunity: Opportunity) -> PortfolioPosition | None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -509,7 +614,8 @@ class PortfolioManager:
             return None
 
         raw_stake = self.bankroll * self.max_risk_per_bet
-        kelly_stake = self.bankroll * max(0.0, opportunity.kelly_fraction)
+        effective_fraction = max(0.0, opportunity.kelly_fraction) * self.fractional_kelly
+        kelly_stake = self.bankroll * effective_fraction
         stake = min(raw_stake, kelly_stake)
         if stake <= 0.0:
             return None
@@ -519,6 +625,15 @@ class PortfolioManager:
         if remaining <= 0.0:
             return None
         stake = min(stake, remaining)
+        correlation_key = self._correlation_key(opportunity)
+        if correlation_key is not None:
+            limit_fraction = self._correlation_limits.get(correlation_key)
+            if limit_fraction is not None:
+                correlation_cap = self.bankroll * limit_fraction
+                remaining_corr = correlation_cap - self._correlated_exposure[correlation_key]
+                if remaining_corr <= 0.0:
+                    return None
+                stake = min(stake, remaining_corr)
         if self._controls.session_stake_limit is not None:
             remaining_session = self._controls.session_stake_limit - self._total_session_stake
             if remaining_session <= 0:
@@ -538,6 +653,8 @@ class PortfolioManager:
             return None
         self.bankroll -= stake
         self._exposure[event_key] += stake
+        if correlation_key is not None:
+            self._correlated_exposure[correlation_key] += stake
         position = PortfolioPosition(opportunity=opportunity, stake=stake)
         self.positions.append(position)
         self._total_session_stake += stake
@@ -555,6 +672,9 @@ class PortfolioManager:
     def exposure_report(self) -> Dict[Tuple[str, str], float]:
         return dict(self._exposure)
 
+    def correlation_report(self) -> Dict[str, float]:
+        return dict(self._correlated_exposure)
+
     def reset_session(self, bankroll: float | None = None) -> None:
         """Reset session counters and optionally bankroll."""
 
@@ -564,11 +684,51 @@ class PortfolioManager:
         self._total_session_stake = 0.0
         self._cooldown_until = None
 
+    def simulate_bankroll(
+        self,
+        *,
+        trials: int = 500,
+        seed: int | None = None,
+        positions: Sequence[PortfolioPosition] | None = None,
+    ) -> BankrollSimulationResult:
+        if trials <= 0:
+            raise ValueError("Simulation trials must be positive")
+        sample_positions = list(positions or self.positions)
+        rng = random.Random(seed)
+        trajectories: List[BankrollTrajectory] = []
+        start = self._session_start_bankroll
+        for _ in range(trials):
+            bankroll = start
+            balances = [bankroll]
+            for position in sample_positions:
+                opportunity = position.opportunity
+                payout = american_to_profit_multiplier(opportunity.american_odds)
+                win_prob = max(0.0, min(1.0, opportunity.model_probability))
+                push_prob = max(0.0, min(1.0 - win_prob, opportunity.push_probability))
+                roll = rng.random()
+                if roll < win_prob:
+                    bankroll += position.stake * payout
+                elif roll < win_prob + push_prob:
+                    bankroll += 0.0
+                else:
+                    bankroll -= position.stake
+                balances.append(bankroll)
+            trajectories.append(BankrollTrajectory(balances))
+        return BankrollSimulationResult(trajectories)
+
     def _start_cooldown(self, reference: dt.datetime) -> None:
         if self._controls.cooldown_seconds:
             self._cooldown_until = reference + dt.timedelta(
                 seconds=self._controls.cooldown_seconds
             )
+
+    @staticmethod
+    def _default_correlation_key(opportunity: Opportunity) -> str | None:
+        if opportunity.extra and isinstance(opportunity.extra, Mapping):
+            value = opportunity.extra.get("correlation_group")
+            if isinstance(value, str):
+                return value
+        return None
 
 
 def consolidate_best_prices(opportunities: Sequence[Opportunity]) -> List[Opportunity]:

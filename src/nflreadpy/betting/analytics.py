@@ -909,6 +909,52 @@ class LineMovementAnalyzer:
         return ordered_movements
 
 
+def line_movement_summary(
+    history: Sequence["IngestedOdds"],
+    *,
+    alert_threshold: int = 40,
+    depth: int | None = None,
+    alert_manager: AlertManager | None = None,
+) -> List[LineMovement]:
+    """Return the most significant line movements in ``history``.
+
+    Parameters
+    ----------
+    history:
+        Historical odds quotes ordered arbitrarily. The records are grouped by
+        selection and sorted chronologically before calculating movement.
+    alert_threshold:
+        Magnitude of movement (in American odds) required before the
+        ``alert_manager`` is notified. Defaults to ``40`` which mirrors the
+        behaviour of :class:`LineMovementAnalyzer`.
+    depth:
+        Optional cap on the number of movements returned. When provided the
+        summary is truncated after sorting by absolute delta.
+    alert_manager:
+        Optional alert manager used for side effects. When omitted the default
+        alert manager from :func:`get_alert_manager` is used.
+
+    Returns
+    -------
+    list[LineMovement]
+        Ordered line movement summaries sorted by descending absolute delta.
+    """
+
+    if alert_manager is None:
+        class _NullAlertManager:
+            def notify_line_movement(self, *_args, **_kwargs) -> None:  # pragma: no cover - trivial
+                return
+
+        alert_manager = _NullAlertManager()
+    analyzer = LineMovementAnalyzer(
+        history, alert_manager=alert_manager, alert_threshold=alert_threshold
+    )
+    summary = analyzer.summarise()
+    if depth is not None:
+        return summary[: max(depth, 0)]
+    return summary
+
+
 @dataclasses.dataclass(slots=True)
 class PortfolioPosition:
     opportunity: Opportunity

@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 from collections import defaultdict
 from typing import Iterable, Mapping, Sequence, Tuple
 
-from .analytics import BankrollSimulationResult, Opportunity, PortfolioPosition
+from .analytics import (
+    BankrollSimulationResult,
+    LineMovement,
+    Opportunity,
+    PortfolioPosition,
+)
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 
@@ -189,6 +195,18 @@ class DashboardContext:
     opportunities: Sequence[Opportunity]
     search_results: dict[str, Sequence[object]]
     risk_summary: RiskSummary | None = None
+    movement_summary: Sequence[LineMovement] = dataclasses.field(default_factory=tuple)
+    movement_series: Mapping[
+        Tuple[str, str, str, str, str | None, float | None],
+        Tuple[Tuple[dt.datetime, int], ...],
+    ] = dataclasses.field(default_factory=dict)
+    movement_sparklines: Mapping[
+        Tuple[str, str, str, str, str | None, float | None],
+        str,
+    ] = dataclasses.field(default_factory=dict)
+    movement_depth: int | None = None
+    movement_threshold: int | None = None
+    stale_after: dt.timedelta | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -286,6 +304,89 @@ def parse_filter_tokens(tokens: Sequence[str]) -> dict[str, object]:
     return updates
 
 
+def movement_key(row: IngestedOdds | LineMovement) -> Tuple[str, str, str, str, str | None, float | None]:
+    """Return the grouping key for movement analytics."""
+
+    if isinstance(row, LineMovement):
+        return row.key
+    return (
+        row.event_id,
+        row.market,
+        row.scope,
+        row.team_or_player,
+        row.side,
+        row.line,
+    )
+
+
+def build_movement_series(
+    history: Sequence[IngestedOdds],
+    *,
+    max_points: int | None = None,
+) -> dict[
+    Tuple[str, str, str, str, str | None, float | None],
+    tuple[tuple[dt.datetime, int], ...],
+]:
+    """Group odds history into ordered time-series per selection."""
+
+    grouped: defaultdict[
+        Tuple[str, str, str, str, str | None, float | None],
+        list[tuple[dt.datetime, int]],
+    ] = defaultdict(list)
+    for row in history:
+        key = movement_key(row)
+        grouped[key].append((row.observed_at, row.american_odds))
+    result: dict[
+        Tuple[str, str, str, str, str | None, float | None],
+        tuple[tuple[dt.datetime, int], ...],
+    ] = {}
+    for key, entries in grouped.items():
+        ordered = sorted(entries, key=lambda item: item[0])
+        if max_points is not None and max_points >= 0:
+            ordered = ordered[-max_points:]
+        result[key] = tuple(ordered)
+    return result
+
+
+_SPARKLINE_STEPS = "▁▂▃▄▅▆▇█"
+
+
+def render_sparkline(values: Sequence[int]) -> str:
+    """Render ``values`` as a simple unicode sparkline."""
+
+    if not values:
+        return ""
+    minimum = min(values)
+    maximum = max(values)
+    if minimum == maximum:
+        return _SPARKLINE_STEPS[len(_SPARKLINE_STEPS) // 2] * len(values)
+    scale = maximum - minimum
+    return "".join(
+        _SPARKLINE_STEPS[
+            int(round(((value - minimum) / scale) * (len(_SPARKLINE_STEPS) - 1)))
+        ]
+        for value in values
+    )
+
+
+def format_age(delta: dt.timedelta) -> str:
+    """Return a compact representation of ``delta`` for freshness indicators."""
+
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        total_seconds = 0
+    minutes, seconds = divmod(total_seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d{hours}h"
+    if hours:
+        return f"{hours}h{minutes}m"
+    if minutes:
+        return f"{minutes}m{seconds:02d}s"
+    return f"{seconds}s"
+
+
 __all__ = [
     "DEFAULT_SEARCH_TARGETS",
     "DashboardContext",
@@ -296,10 +397,14 @@ __all__ = [
     "DashboardSnapshot",
     "RiskSummary",
     "build_ladder_matrix",
+    "build_movement_series",
     "describe_filter_dimension",
     "freeze_optional",
+    "format_age",
     "is_half_scope",
     "is_quarter_scope",
+    "movement_key",
     "normalize_scope",
     "parse_filter_tokens",
+    "render_sparkline",
 ]

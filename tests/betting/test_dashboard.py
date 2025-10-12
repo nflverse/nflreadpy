@@ -119,6 +119,31 @@ def sample_simulation() -> list[SimulationResult]:
     ]
 
 
+@pytest.fixture
+def sample_history(sample_quotes: list[IngestedOdds]) -> list[IngestedOdds]:
+    earlier = sample_quotes[0].observed_at - dt.timedelta(minutes=15)
+    history = []
+    for quote in sample_quotes:
+        history.append(
+            IngestedOdds(
+                event_id=quote.event_id,
+                sportsbook=quote.sportsbook,
+                book_market_group=quote.book_market_group,
+                market=quote.market,
+                scope=quote.scope,
+                entity_type=quote.entity_type,
+                team_or_player=quote.team_or_player,
+                side=quote.side,
+                line=quote.line,
+                american_odds=quote.american_odds - 10,
+                observed_at=earlier,
+                extra=quote.extra,
+            )
+        )
+        history.append(quote)
+    return history
+
+
 def test_ladder_matrix(sample_quotes: list[IngestedOdds]) -> None:
     ladders = build_ladder_matrix(sample_quotes)
     assert ("KC@BUF", "spread", "Buffalo Bills") in ladders
@@ -176,12 +201,47 @@ def test_ladder_panel_marks_best_scope() -> None:
     assert " -2.5      -105*    -102  game" in output
 
 
+def test_dashboard_displays_movement_panel(
+    sample_quotes: list[IngestedOdds],
+    sample_simulation: list[SimulationResult],
+    sample_opportunities: list[Opportunity],
+    sample_history: list[IngestedOdds],
+) -> None:
+    dashboard = Dashboard()
+    output = dashboard.render(
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+        movement_history=sample_history,
+        movement_depth=5,
+        stale_after=dt.timedelta(minutes=5),
+    )
+    assert "Line Movement" in output
+    assert "Sparkline" in output
+
+
+def test_dashboard_marks_stale_quotes(
+    sample_quotes: list[IngestedOdds],
+    sample_history: list[IngestedOdds],
+) -> None:
+    dashboard = Dashboard()
+    rendered = dashboard.render(
+        sample_quotes,
+        [],
+        [],
+        movement_history=sample_history,
+        stale_after=dt.timedelta(seconds=30),
+    )
+    assert "⚠️" in rendered
+
+
 def test_dashboard_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     sample_quotes,
     sample_simulation,
     sample_opportunities,
     sample_risk_summary,
+    sample_history,
 ) -> None:
     class _FixedDateTime(dt.datetime):
         @classmethod
@@ -196,6 +256,9 @@ def test_dashboard_snapshot(
         sample_simulation,
         sample_opportunities,
         risk_summary=sample_risk_summary,
+        movement_history=sample_history,
+        movement_depth=4,
+        stale_after=dt.timedelta(minutes=5),
     )
     assert isinstance(snapshot, DashboardSnapshot)
     assert snapshot.header[0] == "NFL Terminal — 2024-01-21 13:30Z"
@@ -218,10 +281,23 @@ def test_dashboard_snapshot(
 
 def test_terminal_session_commands(sample_quotes, sample_simulation, sample_opportunities) -> None:
     session = TerminalDashboardSession()
-    response = session.handle("filter sportsbooks=FanDuel", sample_quotes, sample_simulation, sample_opportunities)
+    response = session.handle(
+        "filter sportsbooks=FanDuel",
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+        sample_quotes,
+        movement_depth=3,
+        stale_after=dt.timedelta(minutes=5),
+    )
     assert response == "Filters updated."
     session.handle("search Chiefs", sample_quotes, sample_simulation, sample_opportunities)
-    rendered = session.handle("show", sample_quotes, sample_simulation, sample_opportunities)
+    rendered = session.handle(
+        "show",
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+    )
     assert "Kansas City Chiefs" in rendered
     cleared = session.handle("clear search", sample_quotes, sample_simulation, sample_opportunities)
     assert cleared == "Search cleared."
@@ -239,6 +315,7 @@ def test_keyboard_controller(sample_quotes, sample_simulation, sample_opportunit
         sample_simulation,
         sample_opportunities,
         risk_summary=sample_risk_summary,
+        movement_history=sample_quotes,
     )
     assert isinstance(snapshot, DashboardSnapshot)
     assert controller.current_panel_key == controller.panel_keys[0]

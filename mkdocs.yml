@@ -60,7 +60,9 @@ nav:
     - Deployment: betting/deployment.md
     - Developer Extension Points: betting/extensibility.md
     - Operations: betting/operations.md
-  - Changelog: CHANGELOG.md
+  - Changelog:
+    - Core Library: CHANGELOG.md
+    - Betting Module: betting/changelog.md
   - Automation Status: https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html
   - Data Dictionaries: https://nflreadr.nflverse.com/articles/index.html
   - nflverse GitHub: https://github.com/nflverse

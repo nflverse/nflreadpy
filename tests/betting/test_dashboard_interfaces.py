@@ -23,6 +23,7 @@ from nflreadpy.betting.web import (
 )
 from nflreadpy.betting.web.app import (
     _calibration_frame,
+    _ladder_frame,
     _line_history_frame,
     _live_market_table,
     _opportunities_table,
@@ -234,6 +235,18 @@ def test_portfolio_table_totals(sample_quotes):
         ]
     )
     assert totals.row(0) == (175.0, 82.5)
+
+
+@pytest.mark.skipif(pl is None, reason="polars not installed")
+def test_ladder_frame_marks_best_scope():
+    ladder = {
+        "1sthalf": {-2.5: -105},
+        "game": {-2.5: -102},
+    }
+    frame = _ladder_frame(ladder)
+    assert frame.columns == ["line", "1sthalf", "game", "best_scope"]
+    assert frame.height == 1
+    assert frame["best_scope"].to_list() == ["game"]
 
 
 @pytest.mark.skipif(pl is None, reason="polars not installed")

@@ -80,6 +80,15 @@ provides:
   ingestion → modeling → edge detection loop with portfolio recommendations and
   movement summaries.
 
+Comprehensive documentation for the betting toolkit lives on the docs site:
+
+- [Setup guide](https://nflreadpy.nflverse.com/betting/setup/)
+- [Configuration reference](https://nflreadpy.nflverse.com/betting/configuration/)
+- [CLI command reference](https://nflreadpy.nflverse.com/betting/cli/)
+- [Dashboard usage](https://nflreadpy.nflverse.com/betting/dashboard/)
+- [Developer extension points](https://nflreadpy.nflverse.com/betting/extensibility/)
+- [Operations runbook](https://nflreadpy.nflverse.com/betting/operations/)
+
 Quotes are normalised into the rich schema requested in ``AGENTS.md``:
 
 ``(book_market_group, market, scope, team_or_player, side, line, american_odds, extra)``

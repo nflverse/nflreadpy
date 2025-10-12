@@ -69,6 +69,19 @@ class DashboardSearchState:
         return bool(needle and needle in haystack)
 
 
+@dataclasses.dataclass(slots=True)
+class RiskSummary:
+    """Aggregate bankroll and exposure metrics for the risk panel."""
+
+    bankroll: float
+    opportunity_fraction: float
+    portfolio_fraction: float
+    positions: Sequence[PortfolioPosition] = dataclasses.field(default_factory=tuple)
+    exposure_by_event: Mapping[Tuple[str, str], float] = dataclasses.field(default_factory=dict)
+    correlation_exposure: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    simulation: BankrollSimulationResult | None = None
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardFilters:
     """Collection of filters applied to dashboard data."""
@@ -175,8 +188,6 @@ class DashboardFilters:
 
 @dataclasses.dataclass(slots=True)
 class DashboardContext:
-    """Container for filtered data passed to panel renderers."""
-
     filters: DashboardFilters
     search: DashboardSearchState
     odds: Sequence[IngestedOdds]
@@ -184,6 +195,19 @@ class DashboardContext:
     opportunities: Sequence[Opportunity]
     search_results: dict[str, Sequence[object]]
     risk_summary: RiskSummary | None = None
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class DashboardPanelView:
+    state: DashboardPanelState
+    body: tuple[str, ...]
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class DashboardSnapshot:
+    header: tuple[str, ...]
+    panels: tuple[DashboardPanelView, ...]
+    context: DashboardContext
 
 
 class Dashboard:
@@ -273,14 +297,14 @@ class Dashboard:
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
-    def render(
+    def snapshot(
         self,
         odds: Sequence[IngestedOdds],
         simulations: Sequence[SimulationResult],
         opportunities: Sequence[Opportunity],
         *,
         risk_summary: RiskSummary | None = None,
-    ) -> str:
+    ) -> DashboardSnapshot:
         now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
         header = [f"NFL Terminal — {now}", "=" * 96]
         filtered_odds = [quote for quote in odds if self.filters.match_odds(quote)]
@@ -296,11 +320,39 @@ class Dashboard:
             search_results=search_hits,
             risk_summary=risk_summary,
         )
-
-        sections = ["\n".join(header)]
+        panels: list[DashboardPanelView] = []
         for key in self._panel_order:
             panel = self._panels[key]
-            sections.append(self._render_panel(panel, context))
+            panels.append(DashboardPanelView(panel, self._panel_body(panel, context)))
+        return DashboardSnapshot(tuple(header), tuple(panels), context)
+
+    def render(
+        self,
+        odds: Sequence[IngestedOdds],
+        simulations: Sequence[SimulationResult],
+        opportunities: Sequence[Opportunity],
+        *,
+        risk_summary: RiskSummary | None = None,
+    ) -> str:
+        snapshot = self.snapshot(
+            odds,
+            simulations,
+            opportunities,
+            risk_summary=risk_summary,
+        )
+        sections = ["\n".join(snapshot.header)]
+        for view in snapshot.panels:
+            panel = view.state
+            separator = "-" * len(panel.title)
+            if panel.collapsed:
+                sections.append(f"{panel.title} (collapsed)\n{separator}")
+                continue
+            if not view.body:
+                sections.append(f"{panel.title}\n{separator}\nNo data available.")
+                continue
+            sections.append(
+                "\n".join((f"{panel.title}", separator, *view.body))
+            )
         return "\n".join(section for section in sections if section)
 
     def available_options(
@@ -329,16 +381,16 @@ class Dashboard:
             "events": sorted(events),
         }
 
-    def _render_panel(self, panel: DashboardPanelState, context: DashboardContext) -> str:
-        title_line = f"{panel.title}"
-        separator = "-" * len(panel.title)
+    def _panel_body(self, panel: DashboardPanelState, context: DashboardContext) -> tuple[str, ...]:
         if panel.collapsed:
-            return f"{title_line} (collapsed)\n{separator}"
+            return ()
         renderer = getattr(self, f"_render_{panel.key}")
         content = renderer(context)
         if not content:
-            return f"{title_line}\n{separator}\nNo data available."
-        return f"{title_line}\n{separator}\n{content}".rstrip()
+            return ()
+        if isinstance(content, str):
+            return tuple(content.splitlines())
+        return tuple(content)
 
     def _render_controls(self, context: DashboardContext) -> str:
         lines = ["Active Filters:"]
@@ -364,9 +416,7 @@ class Dashboard:
         odds = sorted(context.odds, key=lambda q: q.observed_at, reverse=True)
         if not odds:
             return "No stored odds quotes."
-        lines = [
-            "Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Seen",
-        ]
+        lines = ["Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Seen"]
         for quote in odds[:20]:
             line_display = f"{quote.line:.1f}" if quote.line is not None else "-"
             side_display = quote.side or "-"
@@ -376,7 +426,7 @@ class Dashboard:
                 f"{quote.scope:<6}{quote.team_or_player:<20}{side_display:<6}{line_display:>6}"
                 f"{quote.american_odds:>7}{seen:>7}"
             )
-            return "\n".join(lines)
+        return "\n".join(lines)  # <- outdented
 
     def _render_opportunities(self, context: DashboardContext) -> str:
         opportunities = context.opportunities
@@ -629,6 +679,18 @@ def _build_ladder_matrix(
     return {k: dict(v) for k, v in ladder.items()}
 
 
+def _parse_filter_tokens(tokens: Sequence[str]) -> dict[str, object]:
+    updates: dict[str, object] = {}
+    for token in tokens:
+        if "=" not in token:
+            raise ValueError(f"Invalid filter token: {token}")
+        key, value = token.split("=", 1)
+        key = key.strip()
+        values = [item.strip() for item in value.split(",") if item.strip()]
+        updates[key] = None if not values else values
+    return updates
+
+
 class TerminalDashboardSession:
     """Small command interpreter for interactive terminal dashboards."""
 
@@ -710,14 +772,10 @@ class TerminalDashboardSession:
     def _filter(self, args: Sequence[str]) -> str:
         if not args:
             return "Usage: filter sportsbooks=DK,FanDuel markets=moneyline"
-        updates: dict[str, object] = {}
-        for token in args:
-            if "=" not in token:
-                return f"Invalid filter token: {token}"
-            key, value = token.split("=", 1)
-            key = key.strip()
-            values = [item.strip() for item in value.split(",") if item.strip()]
-            updates[key] = None if not values else values
+        try:
+            updates = _parse_filter_tokens(args)
+        except ValueError as exc:
+            return str(exc)
         try:
             self.dashboard.set_filters(**updates)
         except TypeError as exc:

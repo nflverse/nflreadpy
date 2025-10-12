@@ -7,7 +7,7 @@ import asyncio
 import dataclasses
 import json
 from collections import defaultdict
-from typing import Awaitable, Callable, Dict, Iterable, List, Mapping, Sequence
+from typing import Awaitable, Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from . import (
     Dashboard,

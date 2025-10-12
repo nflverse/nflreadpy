@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 
 import pytest
 
@@ -114,3 +115,19 @@ def test_api_endpoints() -> None:
     assert "FanDuel" in filters["sportsbooks"]
     opportunities = client.get("/opportunities").json()
     assert opportunities[0]["expected_value"] == pytest.approx(0.092)
+
+
+def test_markets_stream_endpoint() -> None:
+    provider = DummyProvider()
+    app = create_api_app(provider)
+    client = TestClient(app)
+
+    with client.stream("GET", "/markets/stream", params={"limit": 1, "interval": 0}) as response:
+        assert response.status_code == 200
+        for line in response.iter_lines():
+            if not line:
+                continue
+            payload = json.loads(line)
+            assert payload["type"] == "snapshot"
+            assert payload["markets"][0]["event_id"] == "KC@BUF"
+            break

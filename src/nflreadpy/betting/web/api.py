@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import json
+from typing import AsyncIterator
 
 from ..analytics import Opportunity
 from ..dashboard import Dashboard
@@ -11,9 +14,11 @@ from .app import DashboardDataProvider, LineMovementPoint, PortfolioPosition
 
 try:  # pragma: no cover - optional dependency import guard
     from fastapi import Depends, FastAPI
+    from fastapi.responses import StreamingResponse
 except ModuleNotFoundError:  # pragma: no cover - handled in create_api_app
     Depends = None  # type: ignore[assignment]
     FastAPI = None  # type: ignore[assignment]
+    StreamingResponse = None  # type: ignore[assignment]
 
 
 def create_api_app(provider: DashboardDataProvider) -> "FastAPI":
@@ -34,6 +39,27 @@ def create_api_app(provider: DashboardDataProvider) -> "FastAPI":
     def markets(data: DashboardDataProvider = Depends(_provider)) -> list[dict[str, object]]:
         quotes = list(data.live_markets())
         return [_quote_payload(quote) for quote in quotes]
+
+    @app.get("/markets/stream")
+    async def markets_stream(
+        interval: float = 2.0,
+        limit: int | None = None,
+        data: DashboardDataProvider = Depends(_provider),
+    ) -> "StreamingResponse":
+        if StreamingResponse is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("fastapi is required for streaming endpoints.")
+
+        async def _iterator() -> AsyncIterator[str]:
+            count = 0
+            while limit is None or count < limit:
+                payload = [_quote_payload(quote) for quote in data.live_markets()]
+                yield json.dumps({"type": "snapshot", "markets": payload}) + "\n"
+                count += 1
+                if limit is not None and count >= limit:
+                    break
+                await asyncio.sleep(max(interval, 0.0))
+
+        return StreamingResponse(_iterator(), media_type="application/jsonl")
 
     @app.get("/opportunities")
     def opportunities(data: DashboardDataProvider = Depends(_provider)) -> list[dict[str, object]]:

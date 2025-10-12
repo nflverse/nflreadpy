@@ -66,6 +66,21 @@ class IterationConfig(BaseModel):
     backtest: int = 8_000
 
 
+class ScopeScalingConfig(BaseModel):
+    """Configuration for loading or overriding scope scaling parameters."""
+
+    parameters_path: str | None = None
+    fallback_factors: Dict[str, float] = Field(default_factory=dict)
+    overrides: Dict[str, float] = Field(default_factory=dict)
+    seasonal_overrides: Dict[int, Dict[str, float]] = Field(default_factory=dict)
+
+
+class ModelsConfig(BaseModel):
+    """Configuration namespace for statistical models."""
+
+    scope_scaling: ScopeScalingConfig = Field(default_factory=ScopeScalingConfig)
+
+
 class AnalyticsConfig(BaseModel):
     """Controls for downstream analytics heuristics and defaults."""
 
@@ -104,6 +119,7 @@ class BettingConfig(BaseModel):
     environment: str = "default"
     scrapers: list[ScraperConfig] = Field(default_factory=list)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 
@@ -407,6 +423,47 @@ def create_edge_detector(
     )
 
 
+def load_scope_scaling_model(
+    config: BettingConfig,
+    *,
+    base_path: str | os.PathLike[str] | None = None,
+) -> "ScopeScalingModel":
+    """Load the scope scaling model referenced by configuration."""
+
+    from .scope_scaling import ScopeScalingModel
+
+    scope_cfg = config.models.scope_scaling
+    baseline = dict(ScopeScalingModel.DEFAULT_FACTORS)
+    for key, value in scope_cfg.fallback_factors.items():
+        baseline[ScopeScalingModel.canonical_scope(key)] = float(value)
+
+    parameters_path = scope_cfg.parameters_path
+    resolved_path: Path | None = None
+    if parameters_path:
+        candidate = Path(parameters_path)
+        if not candidate.is_absolute() and base_path is not None:
+            base_root = Path(base_path)
+            if base_root.is_file():
+                base_root = base_root.parent
+            candidate = base_root / candidate
+        resolved_path = candidate
+
+    model: ScopeScalingModel
+    if resolved_path and resolved_path.exists():
+        model = ScopeScalingModel.load(resolved_path, default_factors=baseline)
+    else:
+        model = ScopeScalingModel(base_factors=baseline, default_factors=baseline)
+
+    if scope_cfg.overrides:
+        model = model.with_overrides(scope_cfg.overrides)
+
+    if scope_cfg.seasonal_overrides:
+        for season, overrides in scope_cfg.seasonal_overrides.items():
+            model = model.with_overrides(overrides, season=int(season))
+
+    return model
+
+
 __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
@@ -416,8 +473,10 @@ __all__ = [
     "IterationConfig",
     "NormalizationConfig",
     "SchedulerConfig",
+    "ScopeScalingConfig",
     "ScraperConfig",
     "ScraperRuntimeConfig",
+    "load_scope_scaling_model",
     "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",

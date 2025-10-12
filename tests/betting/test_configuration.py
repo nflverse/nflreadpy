@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import polars as pl
 
 from nflreadpy.betting.configuration import (
     BettingConfig,
@@ -14,6 +15,7 @@ from nflreadpy.betting.configuration import (
     create_ingestion_service,
     create_scrapers_from_config,
     load_betting_config,
+    load_scope_scaling_model,
     validate_betting_config,
 )
 
@@ -128,6 +130,13 @@ def test_validate_configuration_emits_warnings() -> None:
 def test_validate_config_cli(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[2]
     config_path = repo_root / "config" / "betting.yaml"
+    env = {**os.environ, "DATA_DIR": str(tmp_path)}
+    existing_path = env.get("PYTHONPATH")
+    path_entries = [str(repo_root / "src")]
+    if existing_path:
+        path_entries.append(existing_path)
+    env["PYTHONPATH"] = os.pathsep.join(path_entries)
+
     result = subprocess.run(
         [
             sys.executable,
@@ -141,8 +150,40 @@ def test_validate_config_cli(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=repo_root,
-        env={**os.environ, "DATA_DIR": str(tmp_path)},
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     assert "Configuration" in result.stdout
+
+
+def test_load_scope_scaling_model(tmp_path: Path) -> None:
+    config = load_betting_config()
+
+    frame = pl.DataFrame(
+        {
+            "scope": ["game", "1h", "2h"],
+            "factor": [1.0, 0.55, 0.45],
+            "samples": [8, 8, 8],
+            "season": [None, None, None],
+        }
+    )
+    destination = tmp_path / "scaling.parquet"
+    frame.write_parquet(destination)
+
+    scope_cfg = config.models.scope_scaling.model_copy(
+        update={
+            "parameters_path": destination.name,
+            "overrides": {"4q": 0.22},
+            "fallback_factors": {"3q": 0.25},
+        }
+    )
+    models_cfg = config.models.model_copy(update={"scope_scaling": scope_cfg})
+    tweaked = config.model_copy(update={"models": models_cfg})
+
+    model = load_scope_scaling_model(tweaked, base_path=tmp_path)
+
+    assert model("1h") == pytest.approx(0.55, rel=1e-6)
+    assert model("2h") == pytest.approx(0.45, rel=1e-6)
+    assert model("3q") == pytest.approx(0.25, rel=1e-6)
+    assert model("4q") == pytest.approx(0.22, rel=1e-6)
 

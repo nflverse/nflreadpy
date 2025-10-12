@@ -19,6 +19,7 @@ from .normalization import NameNormalizer, default_normalizer
 from .scrapers.base import MultiScraperCoordinator, OddsQuote, SportsbookScraper
 from .scrapers.draftkings import DraftKingsScraper
 from .scrapers.fanduel import FanDuelScraper
+from .scrapers.mock import MockSportsbookScraper
 from .scrapers.pinnacle import PinnacleScraper
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ SCRAPER_REGISTRY: Mapping[str, type[SportsbookScraper]] = {
     "fanduel": FanDuelScraper,
     "draftkings": DraftKingsScraper,
     "pinnacle": PinnacleScraper,
+    "mock": MockSportsbookScraper,
 }
 
 
@@ -59,6 +61,7 @@ class OddsIngestionService:
         normalizer: NameNormalizer | None = None,
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
         alert_sink: AlertSink | None = None,
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -68,6 +71,11 @@ class OddsIngestionService:
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
         self._stale_after = stale_after
         self._alert_sink = alert_sink
+        self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
+        self._audit_logger.propagate = True
+        if not self._audit_logger.handlers:
+            for handler in logging.getLogger().handlers:
+                self._audit_logger.addHandler(handler)
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
@@ -193,6 +201,7 @@ class OddsIngestionService:
                 "per_scraper": per_scraper,
             }
             self._emit_validation_alert(len(quotes), self._last_validation_summary)
+            self._record_validation_failure(len(quotes), self._last_validation_summary)
             return []
 
         payload = [
@@ -288,6 +297,11 @@ class OddsIngestionService:
         }
         if discarded_summary:
             self._emit_validation_alert(len(quotes), discarded_summary)
+            self._record_validation_failure(len(quotes), discarded_summary)
+            logger.warning(
+                "ingestion.discarded",
+                extra={"discarded": dict(discarded_summary)},
+            )
         logger.info(
             "Stored %d odds quotes (%d discarded: %s)",
             len(valid_quotes),
@@ -386,6 +400,15 @@ class OddsIngestionService:
             f"Validation rejected {sum(summary.values())} of {requested} quotes.",
             metadata={"discarded": dict(summary)},
         )
+
+    def _record_validation_failure(
+        self, requested: int, summary: Mapping[str, int]
+    ) -> None:
+        if not summary:
+            return
+        payload = {"discarded": dict(summary), "requested": requested}
+        self._audit_logger.warning("ingestion.validation_failed", extra=payload)
+        self._audit_logger.warning("ingestion.discarded", extra=payload)
 
     def _send_alert(
         self,

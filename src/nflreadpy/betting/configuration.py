@@ -1,0 +1,297 @@
+from __future__ import annotations
+
+import datetime as dt
+import json
+import logging
+import os
+import re
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, MutableMapping, Sequence
+
+import yaml
+from pydantic import BaseModel, Field
+
+ENVIRONMENT_VARIABLE = "NFLREADPY_BETTING_ENV"
+EXTRA_CONFIG_VARIABLE = "NFLREADPY_BETTING_CONFIG"
+ENV_OVERRIDE_PREFIX = "NFLREADPY_BETTING__"
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
+    from .alerts import AlertManager, AlertSink
+    from .analytics import EdgeDetector
+    from .ingestion import OddsIngestionService
+    from .scrapers.base import SportsbookScraper
+
+
+class ScraperRuntimeConfig(BaseModel):
+    """Runtime attributes applied to instantiated scrapers."""
+
+    poll_interval_seconds: float | None = None
+    retry_attempts: int | None = None
+    retry_backoff: float | None = None
+    timeout_seconds: float | None = None
+
+
+class ScraperConfig(BaseModel):
+    """Configuration describing how to build a sportsbook scraper."""
+
+    type: str
+    enabled: bool = True
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    runtime: ScraperRuntimeConfig = Field(default_factory=ScraperRuntimeConfig)
+
+
+class SchedulerConfig(BaseModel):
+    """Settings controlling the ingestion scheduler defaults."""
+
+    interval_seconds: float = 0.0
+    jitter_seconds: float = 0.0
+    retries: int = 3
+    retry_backoff: float = 2.0
+
+
+class IngestionConfig(BaseModel):
+    """Persistence and freshness controls for odds ingestion."""
+
+    storage_path: str = "betting_odds.sqlite3"
+    stale_after_seconds: int = 600
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+
+
+class IterationConfig(BaseModel):
+    """Number of Monte Carlo iterations to run for each workflow."""
+
+    simulate: int = 20_000
+    scan: int = 10_000
+    dashboard: int = 15_000
+    backtest: int = 8_000
+
+
+class AnalyticsConfig(BaseModel):
+    """Controls for downstream analytics heuristics and defaults."""
+
+    backend: str = "auto"
+    value_threshold: float = 0.02
+    correlation_penalty: float = 0.0
+    correlation_limits: Dict[str, float] = Field(default_factory=dict)
+    kelly_fraction: float = 0.5
+    bankroll: float = 1_000.0
+    portfolio_fraction: float = 0.5
+    risk_trials: int = 0
+    risk_seed: int | None = None
+    history_limit: int = 256
+    movement_threshold: int = 30
+    iterations: IterationConfig = Field(default_factory=IterationConfig)
+
+
+class BettingConfig(BaseModel):
+    """Aggregate configuration for the betting stack."""
+
+    environment: str = "default"
+    scrapers: list[ScraperConfig] = Field(default_factory=list)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+
+
+_ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
+
+
+def _load_yaml(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(path)
+    with path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    if not isinstance(data, dict):
+        raise TypeError(f"Configuration at {path} must be a mapping")
+    return dict(data)
+
+
+def _merge_layers(base: Dict[str, Any], layer: Mapping[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = dict(base)
+    for key, value in layer.items():
+        if (
+            key in merged
+            and isinstance(merged[key], Mapping)
+            and isinstance(value, Mapping)
+        ):
+            merged[key] = _merge_layers(dict(merged[key]), value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _resolve_env_tokens(value: Any) -> Any:
+    if isinstance(value, str):
+        return _ENV_PATTERN.sub(lambda match: os.getenv(match.group(1), ""), value)
+    if isinstance(value, Mapping):
+        return {k: _resolve_env_tokens(v) for k, v in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_resolve_env_tokens(item) for item in value]
+    return value
+
+
+def _coerce_env_value(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        lowered = raw.lower()
+        if lowered in {"true", "false"}:
+            return lowered == "true"
+        return raw
+
+
+def _set_nested(mapping: MutableMapping[str, Any], path: Iterable[str], value: Any) -> None:
+    segments = list(path)
+    if not segments:
+        return
+    head, *tail = segments
+    key = head.lower().replace("-", "_")
+    if not tail:
+        mapping[key] = value
+        return
+    child = mapping.get(key)
+    if not isinstance(child, MutableMapping):
+        child = {}
+    else:
+        child = dict(child)
+    mapping[key] = child
+    _set_nested(child, tail, value)
+
+
+def _apply_env_overrides(data: Dict[str, Any]) -> Dict[str, Any]:
+    updated = dict(data)
+    for key, raw_value in os.environ.items():
+        if not key.startswith(ENV_OVERRIDE_PREFIX):
+            continue
+        suffix = key[len(ENV_OVERRIDE_PREFIX) :]
+        if not suffix:
+            continue
+        path = [segment for segment in suffix.split("__") if segment]
+        if not path:
+            continue
+        _set_nested(updated, path, _coerce_env_value(raw_value))
+    return updated
+
+
+def load_betting_config(
+    *,
+    base_path: str | os.PathLike[str] | None = None,
+    environment: str | None = None,
+    extra_paths: Sequence[str | os.PathLike[str]] | None = None,
+) -> BettingConfig:
+    """Load layered configuration for the betting stack.
+
+    The loader merges ``config/betting.yaml`` with optional environment-specific
+    overrides (``config/betting.<env>.yaml``), additional override files, and
+    environment variable overrides that use ``NFLREADPY_BETTING__`` prefixes.
+    """
+
+    config_path = Path(base_path or "config/betting.yaml")
+    data = _load_yaml(config_path)
+
+    env_name = environment or os.getenv(ENVIRONMENT_VARIABLE) or data.get("environment")
+    if isinstance(env_name, str):
+        env_path = config_path.with_name(f"{config_path.stem}.{env_name}{config_path.suffix}")
+        if env_path.exists():
+            data = _merge_layers(data, _load_yaml(env_path))
+        data["environment"] = env_name
+
+    merged = dict(data)
+    override_sources: list[Path] = []
+    if extra_paths:
+        override_sources.extend(Path(path) for path in extra_paths)
+    env_overrides = os.getenv(EXTRA_CONFIG_VARIABLE)
+    if env_overrides:
+        override_sources.extend(Path(token) for token in env_overrides.split(os.pathsep) if token)
+
+    for override in override_sources:
+        if override.exists():
+            merged = _merge_layers(merged, _load_yaml(override))
+
+    merged = _apply_env_overrides(merged)
+    merged = _resolve_env_tokens(merged)
+
+    return BettingConfig.model_validate(merged)
+
+
+def create_scrapers_from_config(config: BettingConfig) -> list["SportsbookScraper"]:
+    """Instantiate sportsbook scrapers defined in the configuration."""
+
+    from .ingestion import SCRAPER_REGISTRY
+
+    scrapers: list["SportsbookScraper"] = []
+    for scraper_cfg in config.scrapers:
+        if not scraper_cfg.enabled:
+            continue
+        scraper_type = scraper_cfg.type.lower()
+        scraper_cls = SCRAPER_REGISTRY.get(scraper_type)
+        if not scraper_cls:
+            raise ValueError(f"Unknown scraper type: {scraper_cfg.type}")
+        scraper = scraper_cls(**scraper_cfg.parameters)
+        runtime = scraper_cfg.runtime
+        if runtime.poll_interval_seconds is not None:
+            scraper.poll_interval_seconds = runtime.poll_interval_seconds
+        if runtime.retry_attempts is not None:
+            scraper.retry_attempts = runtime.retry_attempts
+        if runtime.retry_backoff is not None:
+            scraper.retry_backoff = runtime.retry_backoff
+        if runtime.timeout_seconds is not None:
+            scraper.timeout_seconds = runtime.timeout_seconds
+        scrapers.append(scraper)
+    return scrapers
+
+
+def create_ingestion_service(
+    config: BettingConfig,
+    *,
+    alert_sink: "AlertSink" | None = None,
+    storage_path: str | os.PathLike[str] | None = None,
+    audit_logger: logging.Logger | None = None,
+) -> "OddsIngestionService":
+    """Build an :class:`OddsIngestionService` from configuration."""
+
+    from .ingestion import OddsIngestionService
+
+    stale_after = dt.timedelta(seconds=config.ingestion.stale_after_seconds)
+    storage = str(storage_path or config.ingestion.storage_path)
+    scrapers = create_scrapers_from_config(config)
+    return OddsIngestionService(
+        scrapers,
+        storage_path=storage,
+        stale_after=stale_after,
+        alert_sink=alert_sink,
+        audit_logger=audit_logger,
+    )
+
+
+def create_edge_detector(
+    config: BettingConfig,
+    *,
+    alert_manager: "AlertManager" | None = None,
+) -> "EdgeDetector":
+    """Construct an :class:`EdgeDetector` with configuration defaults."""
+
+    from .analytics import EdgeDetector
+
+    analytics = config.analytics
+    return EdgeDetector(
+        value_threshold=analytics.value_threshold,
+        alert_manager=alert_manager,
+        backend=analytics.backend,
+        correlation_penalty=analytics.correlation_penalty,
+    )
+
+
+__all__ = [
+    "AnalyticsConfig",
+    "BettingConfig",
+    "IngestionConfig",
+    "IterationConfig",
+    "SchedulerConfig",
+    "ScraperConfig",
+    "ScraperRuntimeConfig",
+    "create_edge_detector",
+    "create_ingestion_service",
+    "create_scrapers_from_config",
+    "load_betting_config",
+]
+

@@ -1,0 +1,57 @@
+scrapers:
+  - type: draftkings
+    enabled: true
+    parameters:
+      endpoint: "https://api.draftkings.com/odds/v1/leagues/nfl" 
+      headers:
+        Authorization: "Bearer ${DRAFTKINGS_API_TOKEN}"
+        User-Agent: nflreadpy-betting
+    runtime:
+      poll_interval_seconds: 45.0
+      timeout_seconds: 15.0
+  - type: fanduel
+    enabled: true
+    parameters:
+      endpoint: "https://sportsbook-api.fanduel.com/api/event-page" 
+      rate_limit_per_second: 2.5
+    runtime:
+      poll_interval_seconds: 45.0
+      timeout_seconds: 15.0
+  - type: pinnacle
+    enabled: false
+    parameters:
+      endpoint: "https://api.pinnacle.com/v1/odds" 
+      username: ${PINNACLE_USERNAME}
+      password: ${PINNACLE_PASSWORD}
+    runtime:
+      poll_interval_seconds: 60.0
+      timeout_seconds: 20.0
+
+ingestion:
+  storage_path: /var/lib/nflreadpy/odds.sqlite3
+  stale_after_seconds: 600
+  scheduler:
+    interval_seconds: 45.0
+    jitter_seconds: 10.0
+    retries: 5
+    retry_backoff: 3.0
+
+analytics:
+  backend: numpy
+  value_threshold: 0.03
+  correlation_penalty: 0.1
+  kelly_fraction: 0.35
+  bankroll: 25000.0
+  portfolio_fraction: 0.25
+  correlation_limits:
+    same_team: 0.2
+    market_cluster: 0.1
+  risk_trials: 2000
+  risk_seed: 99
+  history_limit: 512
+  movement_threshold: 25
+  iterations:
+    simulate: 40000
+    scan: 20000
+    dashboard: 25000
+    backtest: 12000

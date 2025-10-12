@@ -1,0 +1,40 @@
+environment: default
+
+scrapers:
+  - type: mock
+    enabled: true
+    parameters: {}
+    runtime:
+      poll_interval_seconds: 5.0
+      retry_attempts: 2
+      retry_backoff: 1.0
+      timeout_seconds: 10.0
+
+ingestion:
+  storage_path: data/betting_odds.sqlite3
+  stale_after_seconds: 900
+  scheduler:
+    interval_seconds: 60.0
+    jitter_seconds: 5.0
+    retries: 3
+    retry_backoff: 2.0
+
+analytics:
+  backend: auto
+  value_threshold: 0.02
+  correlation_penalty: 0.05
+  kelly_fraction: 0.5
+  bankroll: 2000.0
+  portfolio_fraction: 0.4
+  correlation_limits:
+    same_team: 0.25
+    quarterback_receiver: 0.15
+  risk_trials: 500
+  risk_seed: 17
+  history_limit: 256
+  movement_threshold: 35
+  iterations:
+    simulate: 20000
+    scan: 10000
+    dashboard: 15000
+    backtest: 8000

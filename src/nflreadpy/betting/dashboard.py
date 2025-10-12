@@ -183,6 +183,7 @@ class DashboardContext:
     simulations: Sequence[SimulationResult]
     opportunities: Sequence[Opportunity]
     search_results: dict[str, Sequence[object]]
+    risk_summary: RiskSummary | None = None
 
 
 class Dashboard:
@@ -293,6 +294,7 @@ class Dashboard:
             simulations=filtered_sims,
             opportunities=filtered_opps,
             search_results=search_hits,
+            risk_summary=risk_summary,
         )
 
         sections = ["\n".join(header)]

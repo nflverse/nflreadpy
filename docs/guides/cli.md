@@ -2,7 +2,8 @@
 
 The `nflreadpy-betting` console script wraps ingestion, modelling, and reporting workflows. All
 commands accept the shared options `--config`, `--environment`, `--storage`, and
-`--alerts-config` to control configuration sources and alert routing.
+`--alerts-config` to control configuration sources and alert routing. When omitted, the CLI reads
+`config/betting.yaml` and honours the layered merge order described in the [configuration guide](configuration.md).
 
 ## `ingest`
 
@@ -91,6 +92,19 @@ uv run nflreadpy-betting backtest --limit 200 --iterations 5000
 | `--limit` | Number of stored snapshots to evaluate. |
 | `--iterations` | Monte Carlo iterations used to rebuild simulations. |
 | `--value-threshold` | Minimum expected value to include in the report. |
+
+## `validate-config`
+
+Merge and validate layered configuration files without starting services. The command prints the
+effective configuration, warnings, and any fatal validation errors.
+
+```bash
+uv run nflreadpy-betting validate-config \
+  --config config/betting.yaml \
+  --environment staging
+```
+
+Use it in pre-commit hooks or CI to guard against malformed YAML and incompatible overrides.
 
 Combine the commands in scripts or schedulers to automate ingestion, modelling, alerting, and
 reporting loops.

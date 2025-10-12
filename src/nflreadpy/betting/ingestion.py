@@ -94,6 +94,7 @@ class OddsIngestionService:
             "latency_seconds": 0.0,
             "per_scraper": {},
             "collected_at": None,
+            "errors": {"scrapers": 0, "validation": 0},
         }
         self._last_validation_summary: Dict[str, int] = {}
         self._future_tolerance = future_tolerance
@@ -413,6 +414,10 @@ class OddsIngestionService:
         collected_at: dt.datetime,
     ) -> None:
         collected_at = collected_at.astimezone(dt.timezone.utc)
+        scraper_error_count = sum(
+            1 for details in per_scraper.values() if details.get("error")
+        )
+        validation_error_count = int(sum(discarded.values()))
         metrics_snapshot = {
             "requested": requested,
             "persisted": persisted,
@@ -420,6 +425,10 @@ class OddsIngestionService:
             "latency_seconds": latency_seconds,
             "per_scraper": {name: dict(details) for name, details in per_scraper.items()},
             "collected_at": collected_at.isoformat(),
+            "errors": {
+                "scrapers": scraper_error_count,
+                "validation": validation_error_count,
+            },
         }
         self._metrics = metrics_snapshot
         self._audit_logger.info(
@@ -431,6 +440,7 @@ class OddsIngestionService:
                 "latency_seconds": latency_seconds,
                 "per_scraper": metrics_snapshot["per_scraper"],
                 "collected_at": metrics_snapshot["collected_at"],
+                "errors": metrics_snapshot["errors"],
             },
         )
 

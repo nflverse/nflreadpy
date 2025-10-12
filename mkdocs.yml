@@ -41,6 +41,13 @@ nav:
     - Configuration: api/configuration.md
     - Cache Management: api/cache.md
     - Utilities: api/utils.md
+  - Guides:
+    - Platform Setup: guides/setup.md
+    - Configuration: guides/configuration.md
+    - CLI Commands: guides/cli.md
+    - Dashboards: guides/dashboards.md
+    - Operations & Runbooks: guides/operations.md
+    - Extension Points: guides/extension-points.md
   - Betting:
     - Setup: betting/setup.md
     - Configuration: betting/configuration.md

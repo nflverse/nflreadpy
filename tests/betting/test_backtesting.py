@@ -16,6 +16,7 @@ from nflreadpy.betting.backtesting import (
     load_historical_snapshots,
     reliability_table,
     run_backtest,
+    simulate_settlements,
     settlements_to_frame,
 )
 
@@ -54,6 +55,30 @@ def test_run_backtest_metrics_are_deterministic(snapshots: pl.DataFrame) -> None
     assert pytest.approx(result.average_crps, rel=1e-6) == 0.1971666666666667
 
 
+def test_simulate_settlements_produces_expected_values(
+    snapshots: pl.DataFrame,
+) -> None:
+    settlements = list(simulate_settlements(snapshots))
+    moneyline = next(
+        item
+        for item in settlements
+        if item.event_id == "2024-NE-NYJ" and item.market == "moneyline"
+    )
+    assert moneyline.outcome == "win"
+    assert math.isclose(moneyline.actual_outcome, 1.0)
+    assert moneyline.pnl == pytest.approx(0.7692307692307693, rel=1e-6)
+    assert moneyline.brier == pytest.approx(0.1764, rel=1e-6)
+    assert moneyline.log_loss == pytest.approx(0.5447271754416722, rel=1e-6)
+    push = next(
+        item
+        for item in settlements
+        if item.event_id == "2024-CHI-GB" and item.market == "spread"
+    )
+    assert push.outcome == "push"
+    assert math.isclose(push.actual_outcome, 0.5)
+    assert math.isclose(push.pnl, 0.0)
+
+
 def test_reliability_diagram_exports_expected_values(tmp_path: Path, snapshots: pl.DataFrame) -> None:
     settlements = run_backtest(snapshots).settlements
     output = tmp_path / "reliability.csv"
@@ -89,6 +114,15 @@ def test_closing_line_report_contains_odds_and_line_deltas(tmp_path: Path, snaps
     assert pytest.approx(first["odds_delta"], rel=1e-6) == -10.0
     assert pytest.approx(first["implied_probability"], rel=1e-6) == 0.56521739
     assert pytest.approx(first["closing_implied_probability"], rel=1e-6) == 0.58333333
+    initial_implied = 13 / 23
+    closing_implied = 7 / 12
+    expected_model_edge = 0.58 - initial_implied
+    expected_closing_edge = 0.58 - closing_implied
+    expected_edge_delta = expected_closing_edge - expected_model_edge
+    assert first["model_probability"] == pytest.approx(0.58, rel=1e-6)
+    assert first["model_edge"] == pytest.approx(expected_model_edge, rel=1e-6)
+    assert first["closing_model_edge"] == pytest.approx(expected_closing_edge, rel=1e-6)
+    assert first["edge_delta"] == pytest.approx(expected_edge_delta, rel=1e-6)
     spread = table.filter((pl.col("event_id") == "2024-NE-NYJ") & (pl.col("market") == "spread")).row(0, named=True)
     assert pytest.approx(spread["line_delta"], rel=1e-6) == -0.5
 
@@ -97,7 +131,14 @@ def test_closing_line_table_returns_expected_columns(snapshots: pl.DataFrame) ->
     settlements = run_backtest(snapshots).settlements
     table = closing_line_table(settlements)
     assert table.height == 6
-    assert {"odds_delta", "implied_delta", "line_delta"}.issubset(table.columns)
+    assert {
+        "odds_delta",
+        "implied_delta",
+        "line_delta",
+        "model_edge",
+        "closing_model_edge",
+        "edge_delta",
+    }.issubset(table.columns)
 
 
 def test_settlements_to_frame_round_trips_data(snapshots: pl.DataFrame) -> None:

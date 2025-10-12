@@ -8,6 +8,7 @@ import logging
 from collections import defaultdict
 from typing import Dict, List, Mapping, Sequence, Tuple
 
+from .alerts import AlertManager, get_alert_manager
 from .models import (
     PlayerPropForecaster,
     ProbabilityTriple,
@@ -64,9 +65,11 @@ class EdgeDetector:
         self,
         value_threshold: float = 0.02,
         player_model: PlayerPropForecaster | None = None,
+        alert_manager: AlertManager | None = None,
     ) -> None:
         self.value_threshold = value_threshold
         self.player_model = player_model or PlayerPropForecaster()
+        self.alert_manager = alert_manager or get_alert_manager()
 
     def detect(
         self, odds: Sequence[OddsQuote], simulations: Sequence[SimulationResult]
@@ -105,6 +108,17 @@ class EdgeDetector:
                 )
             )
         logger.info("Detected %d potential edges", len(opportunities))
+        if self.alert_manager:
+            self.alert_manager.notify_edges(
+                [
+                    {
+                        "team_or_player": opp.team_or_player,
+                        "american_odds": opp.american_odds,
+                        "expected_value": opp.expected_value,
+                    }
+                    for opp in opportunities
+                ]
+            )
         return opportunities
 
     def _probability_for_quote(
@@ -223,8 +237,16 @@ class LineMovement:
 class LineMovementAnalyzer:
     """Summarise line movement using stored odds history."""
 
-    def __init__(self, history: Sequence["IngestedOdds"]) -> None:
+    def __init__(
+        self,
+        history: Sequence["IngestedOdds"],
+        *,
+        alert_manager: AlertManager | None = None,
+        alert_threshold: int = 40,
+    ) -> None:
         self.history = list(history)
+        self.alert_manager = alert_manager or get_alert_manager()
+        self.alert_threshold = alert_threshold
 
     def summarise(self) -> List[LineMovement]:
         grouped: Dict[
@@ -257,7 +279,19 @@ class LineMovementAnalyzer:
                     latest_time=latest.observed_at,
                 )
             )
-        return sorted(movements, key=lambda movement: abs(movement.delta), reverse=True)
+        ordered = sorted(movements, key=lambda movement: abs(movement.delta), reverse=True)
+        if self.alert_manager:
+            self.alert_manager.notify_line_movement(
+                [
+                    {
+                        "key": movement.key,
+                        "delta": movement.delta,
+                    }
+                    for movement in ordered
+                ],
+                threshold=self.alert_threshold,
+            )
+        return ordered
 
 
 @dataclasses.dataclass(slots=True)

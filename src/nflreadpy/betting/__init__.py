@@ -26,6 +26,11 @@ from .analytics import (
     PortfolioManager,
     consolidate_best_prices,
 )
+from .compliance import (
+    ComplianceConfig,
+    ComplianceEngine,
+    ResponsibleGamingControls,
+)
 from .dashboard import Dashboard
 from .ingestion import OddsIngestionService
 from .models import (
@@ -50,6 +55,8 @@ from .scrapers.mock import MockSportsbookScraper
 __all__ = [
     "AlertManager",
     "Dashboard",
+    "ComplianceConfig",
+    "ComplianceEngine",
     "EdgeDetector",
     "GameSimulationConfig",
     "EmailAlertSink",

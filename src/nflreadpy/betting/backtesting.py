@@ -8,10 +8,13 @@ metrics that can be surfaced in dashboards.
 from __future__ import annotations
 
 import dataclasses
+import json
 import math
+import random
+import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import polars as pl
 
@@ -30,12 +33,17 @@ __all__ = [
     "export_reliability_diagram",
     "get_sportsbook_rules",
     "load_historical_snapshots",
+    "persist_quantum_comparison",
     "persist_backtest_reports",
     "reliability_table",
+    "compare_quantum_backtest",
     "run_backtest",
     "settlements_to_frame",
     "simulate_settlements",
 ]
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .analytics import Opportunity as OpportunityType, PortfolioPosition as PortfolioPositionType
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -122,6 +130,46 @@ class BacktestArtifacts:
     metrics: BacktestMetrics
     reliability_path: Path
     closing_line_path: Path
+
+
+@dataclasses.dataclass(slots=True)
+class ScenarioPerformance:
+    """Summary metrics for a single staking strategy."""
+
+    name: str
+    expected_value: float
+    realized_pnl: float
+    hit_rate: float
+    wins: int
+    attempts: int
+    average_drawdown: float
+    max_drawdown: float
+    per_event_profits: list[float] = dataclasses.field(repr=False)
+    per_event_expected: list[float] = dataclasses.field(repr=False)
+
+
+@dataclasses.dataclass(slots=True)
+class QuantumScenarioComparison:
+    """Comparison between baseline and quantum-optimised staking."""
+
+    baseline: ScenarioPerformance
+    quantum: ScenarioPerformance
+    delta_expected_value: float
+    delta_hit_rate: float
+    delta_max_drawdown: float
+    profit_differences: list[float] = dataclasses.field(repr=False)
+    t_statistic: float | None = None
+    t_p_value: float | None = None
+    bootstrap_p_value: float | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class QuantumComparisonArtifacts:
+    """File artefacts produced when persisting quantum comparison results."""
+
+    summary_path: Path
+    distribution_path: Path
+    significance_path: Path
 
 
 def load_historical_snapshots(path: str | Path) -> pl.DataFrame:

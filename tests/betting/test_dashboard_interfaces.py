@@ -358,6 +358,9 @@ class _StubProvider:
     def opportunities(self):
         return self._opps
 
+    def quantum_comparison(self):  # pragma: no cover - optional hook
+        return None
+
     def line_history(self):
         base = dt.datetime(2024, 1, 7, 11, 0, tzinfo=dt.timezone.utc)
         return [

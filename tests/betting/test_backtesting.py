@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -10,13 +11,17 @@ import pytest
 from nflreadpy.betting.backtesting import (
     BacktestArtifacts,
     BacktestMetrics,
+    QuantumComparisonArtifacts,
+    QuantumScenarioComparison,
     SportsbookRules,
     closing_line_table,
+    compare_quantum_backtest,
     export_closing_line_report,
     export_reliability_diagram,
     get_sportsbook_rules,
     load_historical_snapshots,
     persist_backtest_reports,
+    persist_quantum_comparison,
     reliability_table,
     run_backtest,
     settlements_to_frame,
@@ -231,3 +236,59 @@ def test_get_sportsbook_rules_falls_back_to_default() -> None:
     default_rules = get_sportsbook_rules("unknown")
     assert isinstance(default_rules, SportsbookRules)
     assert default_rules.name == "default"
+
+
+def test_compare_quantum_backtest_returns_comparison(
+    snapshots: pl.DataFrame,
+) -> None:
+    comparison = compare_quantum_backtest(
+        snapshots,
+        bankroll=100.0,
+        max_risk_per_bet=0.25,
+        max_event_exposure=1.0,
+        portfolio_fraction=1.0,
+        optimizer_shots=256,
+        optimizer_seed=7,
+        bootstrap_iterations=512,
+        bootstrap_seed=11,
+    )
+    assert isinstance(comparison, QuantumScenarioComparison)
+    assert len(comparison.profit_differences) == snapshots.height
+    assert comparison.baseline.name == "baseline"
+    assert comparison.quantum.name == "quantum"
+    assert comparison.bootstrap_p_value is not None
+    assert comparison.t_statistic is not None
+    assert comparison.baseline.expected_value == pytest.approx(6.1518181818)
+    assert comparison.delta_expected_value == pytest.approx(0.0)
+    assert comparison.baseline.per_event_profits[0] == pytest.approx(26.0)
+
+
+def test_persist_quantum_comparison_creates_expected_files(
+    tmp_path: Path, snapshots: pl.DataFrame
+) -> None:
+    comparison = compare_quantum_backtest(
+        snapshots,
+        bankroll=100.0,
+        max_risk_per_bet=0.25,
+        max_event_exposure=1.0,
+        portfolio_fraction=1.0,
+        optimizer_shots=128,
+        optimizer_seed=3,
+        bootstrap_iterations=128,
+        bootstrap_seed=5,
+    )
+    artefacts = persist_quantum_comparison(comparison, tmp_path / "reports")
+    assert isinstance(artefacts, QuantumComparisonArtifacts)
+    summary = pl.read_csv(artefacts.summary_path)
+    assert summary.height == 3
+    assert {"scenario", "expected_value", "hit_rate"}.issubset(summary.columns)
+    distribution = pl.read_csv(artefacts.distribution_path)
+    assert set(distribution["scenario"].unique().to_list()) == {
+        "baseline",
+        "quantum",
+        "difference",
+    }
+    significance = json.loads(artefacts.significance_path.read_text())
+    assert "t_statistic" in significance
+    assert "bootstrap_p_value" in significance
+    assert significance["delta_expected_value"] == pytest.approx(0.0)

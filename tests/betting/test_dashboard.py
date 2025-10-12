@@ -4,6 +4,7 @@ import datetime as dt
 
 import pytest
 
+import nflreadpy.betting.analytics as analytics_module
 from nflreadpy.betting.dashboard import (
     Dashboard,
     DashboardSnapshot,
@@ -87,7 +88,12 @@ def sample_risk_summary(sample_opportunities: list[Opportunity]) -> RiskSummary:
         positions=(position,),
         exposure_by_event={("KC@BUF", "moneyline"): 50.0},
         correlation_exposure={"KC": 50.0},
-        simulation=None,
+        simulation=analytics_module.BankrollSimulationResult(
+            [
+                analytics_module.BankrollTrajectory([1000.0, 1040.0, 1080.0]),
+                analytics_module.BankrollTrajectory([1000.0, 980.0, 960.0]),
+            ]
+        ),
     )
 
 
@@ -144,6 +150,8 @@ def test_dashboard_snapshot(
     assert snapshot.header[0] == "NFL Terminal — 2024-01-21 13:30Z"
     risk_panel = next(view for view in snapshot.panels if view.state.key == "risk")
     assert any("Opportunity Kelly fraction" in line for line in risk_panel.body)
+    assert any("Simulation drawdowns" in line for line in risk_panel.body)
+    assert any("Mean terminal" in line for line in risk_panel.body)
     output = dashboard.render(
         sample_quotes,
         sample_simulation,
@@ -152,6 +160,8 @@ def test_dashboard_snapshot(
     )
     assert "Search Results" in output
     assert "Kansas City Chiefs" in output
+    assert "1.83" in output
+    assert "5/6" in output
 
 
 def test_terminal_session_commands(sample_quotes, sample_simulation, sample_opportunities) -> None:

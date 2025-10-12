@@ -433,7 +433,7 @@ class Dashboard:
         if not opportunities:
             return "No actionable opportunities detected."
         lines = [
-            "Event      Market       Scope Selection            Odds   Model   Push  Implied    EV    Kelly",
+            "Event      Market       Scope Selection            US    Dec    Frac   Model   Push  Implied    EV    Kelly",
         ]
         for opp in opportunities[:20]:
             side = opp.side or "-"
@@ -441,9 +441,13 @@ class Dashboard:
             line_display = ""
             if opp.line is not None:
                 line_display = f" {opp.line:.1f}"
+            decimal = opp.decimal_odds()
+            frac_num, frac_den = opp.fractional_odds()
+            frac_display = f"{frac_num}/{frac_den}"
             lines.append(
                 f"{opp.event_id:<10}{opp.market:<12}{opp.scope:<6}{selection:<20}{opp.american_odds:>6}"
-                f"{opp.model_probability:>8.2%}{opp.push_probability:>7.2%}{opp.implied_probability:>8.2%}"
+                f"{decimal:>7.2f}{frac_display:>8}{opp.model_probability:>8.2%}"
+                f"{opp.push_probability:>7.2%}{opp.implied_probability:>8.2%}"
                 f"{opp.expected_value:>7.2%}{opp.kelly_fraction:>8.2%}{line_display}"
             )
         return "\n".join(lines)

@@ -94,12 +94,24 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
     st.set_page_config(page_title=title, layout="wide")
     st.title(title)
 
+    sidebar = st.sidebar
+    sidebar.header("Session")
+    refresh_seconds = sidebar.slider("Auto-refresh seconds", min_value=5, max_value=60, value=15, step=5)
+    refresher = getattr(st, "autorefresh", None)
+    if callable(refresher):  # pragma: no branch - depends on streamlit version
+        refresher(interval=int(refresh_seconds * 1000), key="nfl-dashboard-refresh")
+    else:  # pragma: no cover - informative message only when feature absent
+        sidebar.caption("Install Streamlit 1.27+ for automatic refresh support.")
+    if sidebar.button("Refresh now"):
+        rerun = getattr(st, "experimental_rerun", None)
+        if callable(rerun):  # pragma: no branch - streamlit shim
+            rerun()
+
     live_quotes = list(provider.live_markets())
     opportunities = list(getattr(provider, "opportunities", lambda: [])())
     filters = DashboardFilters()
     available = _collect_options(live_quotes, opportunities)
 
-    sidebar = st.sidebar
     sidebar.header("Filters")
     selected_books = sidebar.multiselect(
         "Sportsbooks", available["sportsbooks"], default=available["sportsbooks"]
@@ -133,6 +145,8 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
     filtered_opportunities = [opp for opp in opportunities if filters.match_opportunity(opp)]
 
     st.caption("Filters applied: " + " | ".join(filters.description()))
+
+    st.caption(f"Last updated: {dt.datetime.now(dt.timezone.utc).isoformat()}")
 
     st.header("Live Markets")
     live_table = _live_market_table(filtered_quotes)

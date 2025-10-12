@@ -32,7 +32,8 @@ from .compliance import (
     ComplianceEngine,
     ResponsibleGamingControls,
 )
-from .dashboard import Dashboard, TerminalDashboardSession
+from .dashboard import Dashboard, DashboardSnapshot, RiskSummary, TerminalDashboardSession
+from .dashboard_tui import DashboardKeyboardController, run_curses_dashboard
 from .ingestion import OddsIngestionService
 from .models import (
     GameSimulationConfig,
@@ -70,6 +71,8 @@ from .scrapers.mock import MockSportsbookScraper
 __all__ = [
     "AlertManager",
     "Dashboard",
+    "DashboardKeyboardController",
+    "DashboardSnapshot",
     "TerminalDashboardSession",
     "ComplianceConfig",
     "ComplianceEngine",
@@ -86,6 +89,7 @@ __all__ = [
     "MultiScraperCoordinator",
     "NameNormalizer",
     "RiskSummary",
+    "run_curses_dashboard",
     "OddsIngestionService",
     "OddsQuote",
     "Opportunity",

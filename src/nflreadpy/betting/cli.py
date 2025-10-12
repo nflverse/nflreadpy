@@ -11,10 +11,8 @@ from typing import Awaitable, Callable, Dict, Iterable, List, Mapping, Sequence,
 
 from . import (
     Dashboard,
-    EdgeDetector,
     GameSimulationConfig,
     LineMovementAnalyzer,
-    MockSportsbookScraper,
     MonteCarloEngine,
     OddsIngestionService,
     Opportunity,
@@ -31,6 +29,12 @@ from .ingestion import IngestedOdds
 from .models import PlayerProjection, SimulationResult, TeamRating
 from .scheduler import Scheduler
 from .scrapers.base import OddsQuote
+from .configuration import (
+    BettingConfig,
+    create_edge_detector,
+    create_ingestion_service,
+    load_betting_config,
+)
 
 
 @dataclasses.dataclass(slots=True)
@@ -39,6 +43,7 @@ class CommandContext:
 
     service: OddsIngestionService
     alert_manager: AlertManager | None
+    config: BettingConfig
 
 
 CommandHandler = Callable[[CommandContext, argparse.Namespace], Awaitable[None]]
@@ -122,9 +127,18 @@ def _run_simulations(quotes: Sequence[OddsQuote], iterations: int) -> List[Simul
     return simulations
 
 
-def _parse_correlation_limits(values: Sequence[str] | None) -> Dict[str, float]:
+def _parse_correlation_limits(
+    values: Sequence[str] | Mapping[str, float] | None,
+) -> Dict[str, float]:
     limits: Dict[str, float] = {}
-    if not values:
+    if values is None:
+        return limits
+    if isinstance(values, Mapping):
+        for group, raw_value in values.items():
+            try:
+                limits[str(group)] = float(raw_value)
+            except (TypeError, ValueError):
+                continue
         return limits
     for entry in values:
         if not entry:
@@ -172,17 +186,21 @@ def _detect_opportunities(
     quotes: Sequence[OddsQuote],
     simulations: Sequence[SimulationResult],
     *,
+    config: BettingConfig,
     value_threshold: float,
     alert_manager: AlertManager | None,
-    kelly_fraction: float,
+    kelly_fraction: float | None = None,
 ) -> List[Opportunity]:
-    detector = EdgeDetector(
-        value_threshold=value_threshold,
-        player_model=_build_player_model(),
-        alert_manager=alert_manager,
-        kelly_fraction=kelly_fraction,
-    )
+    detector = create_edge_detector(config, alert_manager=alert_manager)
+    detector.value_threshold = value_threshold
+    detector.player_model = _build_player_model()
     opportunities = detector.detect(quotes, simulations)
+    fractional = config.analytics.kelly_fraction if kelly_fraction is None else kelly_fraction
+    if fractional != 1.0:
+        opportunities = [
+            dataclasses.replace(opp, kelly_fraction=opp.kelly_fraction * fractional)
+            for opp in opportunities
+        ]
     return consolidate_best_prices(opportunities)
 
 
@@ -296,44 +314,115 @@ def _maybe_alert_ingestion_health(
         alert_manager.notify_ingestion_health(service.metrics)
 
 
-def _create_service(storage_path: str) -> OddsIngestionService:
-    return OddsIngestionService([MockSportsbookScraper()], storage_path=storage_path)
+def _create_service(
+    config: BettingConfig,
+    *,
+    storage_path: str,
+    alert_manager: AlertManager | None,
+) -> OddsIngestionService:
+    return create_ingestion_service(
+        config,
+        storage_path=storage_path,
+        alert_sink=alert_manager,
+    )
 
 
 def _configure_ingest_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--interval", type=float, default=0.0)
-    parser.add_argument("--jitter", type=float, default=0.0)
-    parser.add_argument("--retries", type=int, default=3)
-    parser.add_argument("--retry-backoff", type=float, default=2.0)
+    parser.add_argument("--interval", type=float)
+    parser.add_argument("--jitter", type=float)
+    parser.add_argument("--retries", type=int)
+    parser.add_argument("--retry-backoff", type=float)
 
 
 def _configure_simulate_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--iterations", type=int, default=20_000)
-    parser.add_argument("--bankroll", type=float, default=1000.0)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--bankroll", type=float)
     parser.add_argument("--refresh", action="store_true", default=False)
-    parser.add_argument("--value-threshold", type=float, default=0.01)
-    parser.add_argument("--history-limit", type=int, default=128)
-    parser.add_argument("--movement-threshold", type=int, default=40)
+    parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--history-limit", type=int)
+    parser.add_argument("--movement-threshold", type=int)
+    parser.add_argument("--kelly-fraction", type=float)
+    parser.add_argument("--portfolio-fraction", type=float)
+    parser.add_argument("--correlation-limit", action="append")
+    parser.add_argument("--risk-trials", type=int)
+    parser.add_argument("--risk-seed", type=int)
 
 
 def _configure_scan_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--iterations", type=int, default=10_000)
-    parser.add_argument("--history-limit", type=int, default=256)
-    parser.add_argument("--value-threshold", type=float, default=0.02)
-    parser.add_argument("--movement-threshold", type=int, default=30)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--history-limit", type=int)
+    parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--movement-threshold", type=int)
+    parser.add_argument("--kelly-fraction", type=float)
+    parser.add_argument("--correlation-limit", action="append")
 
 
 def _configure_dashboard_parser(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--iterations", type=int, default=15_000)
+    parser.add_argument("--iterations", type=int)
     parser.add_argument("--refresh", action="store_true", default=False)
-    parser.add_argument("--value-threshold", type=float, default=0.015)
+    parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--bankroll", type=float)
+    parser.add_argument("--portfolio-fraction", type=float)
+    parser.add_argument("--kelly-fraction", type=float)
+    parser.add_argument("--correlation-limit", action="append")
+    parser.add_argument("--risk-trials", type=int)
+    parser.add_argument("--risk-seed", type=int)
 
 
 def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=500)
-    parser.add_argument("--iterations", type=int, default=8_000)
-    parser.add_argument("--value-threshold", type=float, default=0.02)
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--value-threshold", type=float)
 
+
+def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> None:
+    scheduler = config.ingestion.scheduler
+    if hasattr(args, "interval") and args.interval is None:
+        args.interval = scheduler.interval_seconds
+    if hasattr(args, "jitter") and args.jitter is None:
+        args.jitter = scheduler.jitter_seconds
+    if hasattr(args, "retries") and args.retries is None:
+        args.retries = scheduler.retries
+    if hasattr(args, "retry_backoff") and args.retry_backoff is None:
+        args.retry_backoff = scheduler.retry_backoff
+
+    analytics = config.analytics
+    iterations = getattr(analytics.iterations, getattr(args, "command", ""), None)
+    if hasattr(args, "iterations") and args.iterations is None and iterations is not None:
+        args.iterations = iterations
+    if hasattr(args, "value_threshold") and args.value_threshold is None:
+        args.value_threshold = analytics.value_threshold
+    if hasattr(args, "history_limit") and args.history_limit is None:
+        args.history_limit = analytics.history_limit
+    if hasattr(args, "movement_threshold") and args.movement_threshold is None:
+        args.movement_threshold = analytics.movement_threshold
+
+    bankroll = getattr(args, "bankroll", None)
+    if bankroll is None and hasattr(args, "bankroll"):
+        args.bankroll = analytics.bankroll
+    elif not hasattr(args, "bankroll"):
+        setattr(args, "bankroll", analytics.bankroll)
+
+    portfolio_fraction = getattr(args, "portfolio_fraction", None)
+    if portfolio_fraction is None and hasattr(args, "portfolio_fraction"):
+        args.portfolio_fraction = analytics.portfolio_fraction
+    elif not hasattr(args, "portfolio_fraction"):
+        setattr(args, "portfolio_fraction", analytics.portfolio_fraction)
+
+    kelly_fraction = getattr(args, "kelly_fraction", None)
+    if kelly_fraction is None and hasattr(args, "kelly_fraction"):
+        args.kelly_fraction = analytics.kelly_fraction
+    elif not hasattr(args, "kelly_fraction"):
+        setattr(args, "kelly_fraction", analytics.kelly_fraction)
+
+    if not hasattr(args, "correlation_limit") or args.correlation_limit is None:
+        if analytics.correlation_limits:
+            setattr(args, "correlation_limit", dict(analytics.correlation_limits))
+
+    if hasattr(args, "risk_trials") and args.risk_trials is None:
+        args.risk_trials = analytics.risk_trials
+    if hasattr(args, "risk_seed") and args.risk_seed is None:
+        args.risk_seed = analytics.risk_seed
 
 async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
@@ -383,6 +472,7 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
     opportunities = _detect_opportunities(
         quotes,
         simulations,
+        config=context.config,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
         kelly_fraction=args.kelly_fraction,
@@ -417,6 +507,7 @@ async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
     opportunities = _detect_opportunities(
         quotes,
         simulations,
+        config=context.config,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
         kelly_fraction=args.kelly_fraction,
@@ -448,6 +539,7 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
     opportunities = _detect_opportunities(
         quotes,
         simulations,
+        config=context.config,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
         kelly_fraction=args.kelly_fraction,
@@ -493,8 +585,10 @@ async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> No
         opportunities = _detect_opportunities(
             quotes,
             simulations,
+            config=context.config,
             value_threshold=args.value_threshold,
             alert_manager=alert_manager,
+            kelly_fraction=getattr(args, "kelly_fraction", None),
         )
         cumulative_ev += sum(opp.expected_value for opp in opportunities)
         sample_count += 1
@@ -513,7 +607,9 @@ async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> No
 
 def _build_parser() -> argparse.ArgumentParser:
     parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument("--storage", default="betting_cli.sqlite3")
+    parent.add_argument("--config", dest="config_file")
+    parent.add_argument("--environment", dest="config_environment")
+    parent.add_argument("--storage")
     parent.add_argument("--alerts-config")
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -562,9 +658,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _dispatch(args: argparse.Namespace) -> None:
+    config = load_betting_config(
+        base_path=args.config_file,
+        environment=args.config_environment,
+    )
     alert_manager = get_alert_manager(args.alerts_config)
-    service = _create_service(args.storage)
-    context = CommandContext(service=service, alert_manager=alert_manager)
+    storage_path = str(args.storage or config.ingestion.storage_path)
+    args.storage = storage_path
+    _apply_config_defaults(args, config)
+    service = _create_service(
+        config,
+        storage_path=storage_path,
+        alert_manager=alert_manager,
+    )
+    context = CommandContext(service=service, alert_manager=alert_manager, config=config)
     handler: CommandHandler = args.handler
     await handler(context, args)
 

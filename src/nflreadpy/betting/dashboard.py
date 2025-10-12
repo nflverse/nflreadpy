@@ -188,8 +188,6 @@ class DashboardFilters:
 
 @dataclasses.dataclass(slots=True)
 class DashboardContext:
-    """Container for filtered data passed to panel renderers."""
-
     filters: DashboardFilters
     search: DashboardSearchState
     odds: Sequence[IngestedOdds]
@@ -201,14 +199,12 @@ class DashboardContext:
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardPanelView:
-    """Rendered content for a single dashboard panel."""
     state: DashboardPanelState
     body: tuple[str, ...]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardSnapshot:
-    """Structured representation of the dashboard output."""
     header: tuple[str, ...]
     panels: tuple[DashboardPanelView, ...]
     context: DashboardContext
@@ -420,9 +416,7 @@ class Dashboard:
         odds = sorted(context.odds, key=lambda q: q.observed_at, reverse=True)
         if not odds:
             return "No stored odds quotes."
-        lines = [
-            "Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Seen",
-        ]
+        lines = ["Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Seen"]
         for quote in odds[:20]:
             line_display = f"{quote.line:.1f}" if quote.line is not None else "-"
             side_display = quote.side or "-"
@@ -432,7 +426,7 @@ class Dashboard:
                 f"{quote.scope:<6}{quote.team_or_player:<20}{side_display:<6}{line_display:>6}"
                 f"{quote.american_odds:>7}{seen:>7}"
             )
-            return "\n".join(lines)
+        return "\n".join(lines)  # <- outdented
 
     def _render_opportunities(self, context: DashboardContext) -> str:
         opportunities = context.opportunities

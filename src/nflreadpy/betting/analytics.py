@@ -6,6 +6,9 @@ import collections
 import dataclasses
 import datetime as dt
 import logging
+import math
+import random
+import statistics
 import time
 from typing import Dict, List, Mapping, Sequence, Tuple
 
@@ -565,6 +568,7 @@ class PortfolioManager:
         self.max_event_exposure = max_event_exposure
         self.positions: List[PortfolioPosition] = []
         self._exposure: Dict[Tuple[str, str], float] = collections.defaultdict(float)
+        self._correlated_exposure: Dict[str, float] = collections.defaultdict(float)
         self._compliance_engine = compliance_engine
         self._controls = responsible_gaming or ResponsibleGamingControls()
         self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")

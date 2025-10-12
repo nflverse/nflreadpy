@@ -19,6 +19,7 @@ from .normalization import NameNormalizer, default_normalizer
 from .scrapers.base import MultiScraperCoordinator, OddsQuote, SportsbookScraper
 from .scrapers.draftkings import DraftKingsScraper
 from .scrapers.fanduel import FanDuelScraper
+from .scrapers.mock import MockSportsbookScraper
 from .scrapers.pinnacle import PinnacleScraper
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ SCRAPER_REGISTRY: Mapping[str, type[SportsbookScraper]] = {
     "fanduel": FanDuelScraper,
     "draftkings": DraftKingsScraper,
     "pinnacle": PinnacleScraper,
+    "mock": MockSportsbookScraper,
 }
 
 
@@ -206,6 +208,7 @@ class OddsIngestionService:
                 per_scraper=per_scraper,
             )
             self._emit_validation_alert(len(quotes), self._last_validation_summary)
+            self._record_validation_failure(len(quotes), self._last_validation_summary)
             return []
 
         payload = [
@@ -309,6 +312,11 @@ class OddsIngestionService:
         )
         if discarded_summary:
             self._emit_validation_alert(len(quotes), discarded_summary)
+            self._record_validation_failure(len(quotes), discarded_summary)
+            logger.warning(
+                "ingestion.discarded",
+                extra={"discarded": dict(discarded_summary)},
+            )
         logger.info(
             "Stored %d odds quotes (%d discarded: %s)",
             len(valid_quotes),
@@ -460,6 +468,15 @@ class OddsIngestionService:
             f"Validation rejected {sum(summary.values())} of {requested} quotes.",
             metadata={"discarded": dict(summary)},
         )
+
+    def _record_validation_failure(
+        self, requested: int, summary: Mapping[str, int]
+    ) -> None:
+        if not summary:
+            return
+        payload = {"discarded": dict(summary), "requested": requested}
+        self._audit_logger.warning("ingestion.validation_failed", extra=payload)
+        self._audit_logger.warning("ingestion.discarded", extra=payload)
 
     def _send_alert(
         self,

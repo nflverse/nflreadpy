@@ -1,0 +1,19 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+RUN pip install --upgrade pip \
+    && pip install --no-cache-dir uv
+
+COPY . .
+RUN uv pip install --system --no-cache .[betting]
+
+CMD ["nflreadpy-betting", "--help"]

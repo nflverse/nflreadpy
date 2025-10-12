@@ -47,12 +47,14 @@ nav:
     - CLI: betting/cli.md
     - Compliance & Risk: betting/compliance.md
     - Dashboards: betting/dashboard.md
+    - Deployment: betting/deployment.md
     - Developer Extension Points: betting/extensibility.md
     - Operations: betting/operations.md
   - Changelog: CHANGELOG.md
   - Automation Status: https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html
   - Data Dictionaries: https://nflreadr.nflverse.com/articles/index.html
   - nflverse GitHub: https://github.com/nflverse
+
 
 not_in_nav: |
   CONTRIBUTING.md

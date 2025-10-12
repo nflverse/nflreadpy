@@ -67,6 +67,12 @@ def _build_pydantic_stub() -> types.ModuleType:
 @pytest.fixture()
 def cli_module(monkeypatch: pytest.MonkeyPatch):
     module_name = "nflreadpy.betting.cli"
+    module_prefix = "nflreadpy.betting"
+    cached_modules: dict[str, types.ModuleType] = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == module_prefix or name.startswith(f"{module_prefix}.")
+    }
     monkeypatch.setitem(sys.modules, "yaml", _build_yaml_stub())
     monkeypatch.setitem(sys.modules, "pydantic", _build_pydantic_stub())
 
@@ -77,14 +83,16 @@ def cli_module(monkeypatch: pytest.MonkeyPatch):
     try:
         yield module
     finally:
-        modules_to_clear = [
-            name
-            for name in list(sys.modules)
-            if name == module_name or name.startswith("nflreadpy.betting")
-        ]
-        for name in modules_to_clear:
-            sys.modules.pop(name, None)
-        importlib.invalidate_caches()
+        sys.modules.pop(module_name, None)
+        for name in list(sys.modules):
+            if name == module_prefix or name.startswith(f"{module_prefix}."):
+                sys.modules.pop(name, None)
+
+        for name in sorted(
+            cached_modules,
+            key=lambda value: (value.count("."), value),
+        ):
+            sys.modules[name] = cached_modules[name]
 
 
 @pytest.mark.parametrize("command", ["ingest", "simulate", "scan", "dashboard", "backtest"])

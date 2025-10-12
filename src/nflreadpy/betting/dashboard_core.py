@@ -15,6 +15,29 @@ from .analytics import (
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class LadderCell:
+    """Display payload for ladder matrices."""
+
+    american_odds: int
+    probability: float | None = None
+    raw_probability: float | None = None
+
+    def summary(self, *, precision: int = 1) -> str:
+        base = f"{self.american_odds:+}"
+        if self.probability is None:
+            return base
+        pct = f"{self.probability:.{precision}%}"
+        return f"{base} {pct}"
+
+    def as_dict(self) -> dict[str, float | int | None]:
+        return {
+            "american_odds": self.american_odds,
+            "probability": self.probability,
+            "raw_probability": self.raw_probability,
+        }
+
 DEFAULT_SEARCH_TARGETS = frozenset({"quotes", "opportunities", "simulations"})
 
 
@@ -269,15 +292,42 @@ def describe_filter_dimension(name: str, values: frozenset[str] | None) -> str:
 
 def build_ladder_matrix(
     odds: Sequence[IngestedOdds],
-) -> dict[tuple[str, str, str], dict[str, dict[float, int]]]:
-    ladder: dict[tuple[str, str, str], dict[str, dict[float, int]]] = defaultdict(lambda: defaultdict(dict))
+) -> dict[tuple[str, str, str], dict[str, dict[float, LadderCell]]]:
+    ladder: dict[tuple[str, str, str], dict[str, dict[float, LadderCell]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
     for quote in odds:
         if quote.line is None:
             continue
         key = (quote.event_id, quote.market, quote.team_or_player)
         scope = normalize_scope(quote.scope)
-        ladder[key][scope][round(float(quote.line), 1)] = quote.american_odds
+        rounded_line = round(float(quote.line), 1)
+        tail_info = _tail_probability_payload(quote.extra)
+        probability = (
+            float(tail_info.get("final_win"))
+            if tail_info and isinstance(tail_info.get("final_win"), (int, float))
+            else (
+                float(tail_info.get("adjusted_win"))
+                if tail_info and isinstance(tail_info.get("adjusted_win"), (int, float))
+                else None
+            )
+        )
+        raw_probability = None
+        if tail_info and isinstance(tail_info.get("raw_win"), (int, float)):
+            raw_probability = float(tail_info["raw_win"])
+        ladder[key][scope][rounded_line] = LadderCell(
+            american_odds=quote.american_odds,
+            probability=probability,
+            raw_probability=raw_probability,
+        )
     return {k: dict(v) for k, v in ladder.items()}
+
+
+def _tail_probability_payload(extra: Mapping[str, object] | None) -> Mapping[str, object] | None:
+    if not isinstance(extra, Mapping):
+        return None
+    tail = extra.get("tail_probability")
+    return tail if isinstance(tail, Mapping) else None
 
 
 def parse_filter_tokens(tokens: Sequence[str]) -> dict[str, object]:
@@ -296,6 +346,7 @@ __all__ = [
     "DEFAULT_SEARCH_TARGETS",
     "DashboardContext",
     "DashboardFilters",
+    "LadderCell",
     "DashboardPanelState",
     "DashboardPanelView",
     "DashboardSearchState",

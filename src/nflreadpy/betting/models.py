@@ -29,6 +29,8 @@ from typing import (
     cast,
 )
 
+from .scope_scaling import ScopeScalingModel
+
 JaxArray: TypeAlias = Any
 NDArrayFloat: TypeAlias = Any
 
@@ -182,6 +184,22 @@ if (
 logger = logging.getLogger(__name__)
 
 
+_SCOPE_SCALING_MODEL = ScopeScalingModel.default()
+
+
+def set_scope_scaling_model(model: ScopeScalingModel | None) -> None:
+    """Inject a custom :class:`ScopeScalingModel` for downstream usage."""
+
+    global _SCOPE_SCALING_MODEL
+    _SCOPE_SCALING_MODEL = model or ScopeScalingModel.default()
+
+
+def get_scope_scaling_model() -> ScopeScalingModel:
+    """Return the currently active :class:`ScopeScalingModel`."""
+
+    return _SCOPE_SCALING_MODEL
+
+
 # ---------------------------------------------------------------------------
 # Team and schedule primitives
 # ---------------------------------------------------------------------------
@@ -328,22 +346,7 @@ def _hash_token(token: str) -> float:
 
 
 def _scope_factor(scope: str) -> float:
-    scope = scope.lower()
-    if scope == "game":
-        return 1.0
-    if scope in {"1h", "first_half"}:
-        return 0.52
-    if scope in {"2h", "second_half"}:
-        return 0.48
-    if scope in {"1q", "first_quarter"}:
-        return 0.27
-    if scope in {"2q", "second_quarter"}:
-        return 0.23
-    if scope in {"3q", "third_quarter"}:
-        return 0.26
-    if scope in {"4q", "fourth_quarter"}:
-        return 0.24
-    return 1.0
+    return _SCOPE_SCALING_MODEL(scope)
 
 
 def _coerce_str(value: object | None, field: str) -> str:

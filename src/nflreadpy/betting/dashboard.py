@@ -17,6 +17,7 @@ from .dashboard_core import (
     DEFAULT_SEARCH_TARGETS,
     DashboardContext,
     DashboardFilters,
+    LadderCell,
     DashboardPanelState,
     DashboardPanelView,
     DashboardSearchState,
@@ -442,19 +443,21 @@ class Dashboard:
         for (event_id, market, selection), ladder in ladders.items():
             scopes = sorted(ladder.keys())
             sections.append(f"{event_id} · {market} · {selection}")
-            header = "Line  " + "".join(f"{scope:>9}" for scope in scopes) + "  Best"
+            cell_width = 14
+            header = "Line  " + "".join(f"{scope:>{cell_width}}" for scope in scopes) + "  Best"
             sections.append(header)
             lines = sorted({line for entries in ladder.values() for line in entries})
             for line_value in lines:
                 row = f"{line_value:>5.1f} "
                 best_scope = self._best_scope_for_line(ladder, line_value)
                 for scope in scopes:
-                    odds_value = ladder[scope].get(line_value)
-                    if odds_value is None:
-                        row += " " * 9
+                    cell = ladder[scope].get(line_value)
+                    if cell is None:
+                        row += " " * cell_width
                         continue
                     marker = "*" if scope == best_scope else " "
-                    row += f"{marker}{odds_value:>8}"
+                    display = cell.summary()
+                    row += f"{marker}{display:>{cell_width - 1}}"
                 row += f"  {best_scope or '-'}"
                 sections.append(row.rstrip())
             sections.append("")
@@ -462,15 +465,15 @@ class Dashboard:
 
     @staticmethod
     def _best_scope_for_line(
-        ladder: dict[str, dict[float, int]], line_value: float
+        ladder: dict[str, dict[float, LadderCell]], line_value: float
     ) -> str | None:
         best_scope: str | None = None
         best_price: float | None = None
         for scope, entries in ladder.items():
-            odds_value = entries.get(line_value)
-            if odds_value is None:
+            cell = entries.get(line_value)
+            if cell is None:
                 continue
-            decimal = american_to_decimal(odds_value)
+            decimal = american_to_decimal(cell.american_odds)
             if best_price is None or decimal > best_price:
                 best_price = decimal
                 best_scope = scope

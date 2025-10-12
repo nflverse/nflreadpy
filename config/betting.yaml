@@ -19,6 +19,12 @@ ingestion:
     retries: 3
     retry_backoff: 2.0
 
+models:
+  scope_scaling:
+    parameters_path: data/scope_scaling.parquet
+    fallback_factors: {}
+    overrides: {}
+
 analytics:
   backend: auto
   value_threshold: 0.02
@@ -38,3 +44,13 @@ analytics:
     scan: 10000
     dashboard: 15000
     backtest: 8000
+
+normalization:
+  canonical_identifiers_path: config/identifiers/betting_entities.json
+  fuzzy:
+    enabled: false
+    score_thresholds:
+      team: 90.0
+      player: 92.0
+      sportsbook: 85.0
+    ambiguity_margin: 5.0

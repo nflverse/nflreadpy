@@ -96,6 +96,35 @@ notifications:
 - Pair configuration deployments with `validate-config --strict` to catch
   invalid state before it reaches production.
 
+## Quality gates
+
+### Coverage gate
+
+Continuous integration enforces a **65% minimum line coverage** for the betting
+stack. The gate runs `pytest --cov --cov-report=xml --cov-report=html` and
+relies on the configuration in `pyproject.toml`:
+
+```toml
+[tool.coverage.report]
+fail_under = 65
+```
+
+When the threshold is breached the CI job fails, producing actionable
+coverage artefacts in the workflow summary:
+
+- `coverage.xml` – machine-readable metrics for downstream tooling.
+- `htmlcov/` – a browsable HTML report highlighting gaps by module.
+
+Developers can reproduce the gate locally with:
+
+```bash
+uv run pytest --cov --cov-report=term-missing tests -vv
+```
+
+Investigate any decreases in coverage before merging changes. Prefer targeted
+unit tests over broad integration scenarios to keep the betting components well
+exercised and the gate comfortably above the minimum.
+
 ## Disaster recovery
 
 - Schedule regular backups of the analytics database and object storage buckets

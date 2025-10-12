@@ -6,6 +6,9 @@ Changes:
 * load_schedules() now points to nflverse-data@schedules to access parquet version of file
 * load_trades() now points to nflverse-data@trades to access parquet version of file
 
+Betting module notes live in [`betting/CHANGELOG.md`](betting/CHANGELOG.md) so
+that sportsbook-specific updates do not crowd the core package entries.
+
 
 ---
 

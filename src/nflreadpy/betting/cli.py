@@ -7,11 +7,14 @@ import asyncio
 import dataclasses
 import json
 from collections import defaultdict
+from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Callable,
     Dict,
     Iterable,
     List,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -31,9 +34,6 @@ from . import (
     PlayerPropForecaster,
     PortfolioManager,
     BankrollSimulationResult,
-    QuantumPortfolioOptimizer,
-    compare_optimizers,
-    persist_optimizer_comparison,
     consolidate_best_prices,
 )
 from .alerts import AlertManager, get_alert_manager, install_signal_handlers
@@ -41,16 +41,33 @@ from .analytics import LineMovement
 from .dashboard import RiskSummary
 from .ingestion import IngestedOdds
 from .models import PlayerProjection, SimulationResult, TeamRating
-from .scheduler import Scheduler
+from .scheduler import BacktestOrchestrator, BacktestScheduleConfig, Scheduler
 from .scrapers.base import OddsQuote
 from .configuration import (
     BettingConfig,
     ConfigurationError,
     create_edge_detector,
     create_ingestion_service,
+    create_portfolio_optimizer,
     load_betting_config,
     validate_betting_config,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .quantum import PortfolioOptimizer
+
+
+def _stringify_keys(mapping: Mapping[object, object]) -> Dict[str, object]:
+    """Convert dictionary keys to JSON-safe string representations."""
+
+    normalised: Dict[str, object] = {}
+    for key, value in mapping.items():
+        if isinstance(key, tuple):
+            key_text = " | ".join(str(part) for part in key)
+        else:
+            key_text = str(key)
+        normalised[key_text] = value
+    return normalised
 
 
 @dataclasses.dataclass(slots=True)
@@ -192,6 +209,41 @@ def _build_player_model() -> PlayerPropForecaster:
     return PlayerPropForecaster(projections)
 
 
+def _optimizer_overrides(args: argparse.Namespace) -> Dict[str, object]:
+    overrides: Dict[str, object] = {}
+    mapping = {
+        "optimizer_solver": "solver",
+        "optimizer_risk_aversion": "risk_aversion",
+        "optimizer_seed": "seed",
+        "optimizer_shots": "shots",
+        "optimizer_temperature": "temperature",
+        "optimizer_annealing_steps": "steps",
+        "optimizer_initial_temp": "initial_temperature",
+        "optimizer_cooling_rate": "cooling_rate",
+        "optimizer_qaoa_layers": "layers",
+        "optimizer_qaoa_gamma": "gamma",
+        "optimizer_qaoa_beta": "beta",
+    }
+    for attr, key in mapping.items():
+        if hasattr(args, attr):
+            value = getattr(args, attr)
+            if value is not None:
+                overrides[key] = value
+    return overrides
+
+
+def _resolve_optimizer(
+    config: BettingConfig, args: argparse.Namespace
+) -> Tuple["PortfolioOptimizer[Opportunity]", float, str]:
+    overrides = _optimizer_overrides(args)
+    optimizer, risk_aversion = create_portfolio_optimizer(
+        config,
+        overrides=overrides,
+    )
+    solver = str(overrides.get("solver") or config.analytics.optimizer.solver)
+    return optimizer, risk_aversion, solver
+
+
 def _quotes_from_ingested(records: Sequence[IngestedOdds]) -> List[OddsQuote]:
     return [
         OddsQuote(
@@ -271,18 +323,39 @@ def _build_portfolio(
     correlation_limits: Mapping[str, float],
     risk_trials: int,
     risk_seed: int | None,
-) -> Tuple[PortfolioManager, BankrollSimulationResult | None]:
+    optimizer: "PortfolioOptimizer[Opportunity]" | None = None,
+    risk_aversion: float = 0.4,
+) -> Tuple[
+    PortfolioManager,
+    BankrollSimulationResult | None,
+    List[Tuple[Opportunity, float]],
+]:
     manager = PortfolioManager(
         bankroll=bankroll,
         fractional_kelly=portfolio_fraction,
         correlation_limits=correlation_limits,
     )
-    for opportunity in opportunities:
+    manager.set_optimizer(optimizer, risk_aversion=risk_aversion)
+    ranking = manager.rank_opportunities(opportunities)
+    if ranking:
+        weight_by_id = {id(opp): weight for opp, weight in ranking}
+        enumerated = list(enumerate(opportunities))
+        enumerated.sort(
+            key=lambda item: (
+                weight_by_id.get(id(item[1]), 0.0),
+                -item[0],
+            ),
+            reverse=True,
+        )
+        ordered = [opportunity for _, opportunity in enumerated]
+    else:
+        ordered = list(opportunities)
+    for opportunity in ordered:
         manager.allocate(opportunity)
     simulation: BankrollSimulationResult | None = None
     if risk_trials > 0 and manager.positions:
         simulation = manager.simulate_bankroll(trials=risk_trials, seed=risk_seed)
-    return manager, simulation
+    return manager, simulation, ranking
 
 
 def _detect_opportunities(
@@ -337,20 +410,25 @@ def _portfolio_allocation(
     correlation_limits: Mapping[str, float],
     risk_trials: int,
     risk_seed: int | None,
+    optimizer: "PortfolioOptimizer[Opportunity]",
+    risk_aversion: float,
+    solver_name: str,
 ) -> Tuple[PortfolioManager, BankrollSimulationResult | None]:
-    manager, simulation = _build_portfolio(
+    manager, simulation, ranking = _build_portfolio(
         opportunities,
         bankroll=bankroll,
         portfolio_fraction=portfolio_fraction,
         correlation_limits=correlation_limits,
         risk_trials=risk_trials,
         risk_seed=risk_seed,
+        optimizer=optimizer,
+        risk_aversion=risk_aversion,
     )
-    optimizer = QuantumPortfolioOptimizer(shots=256, seed=13)
-    optimised = optimizer.optimise(opportunities)
-    print("\nQuantum-inspired ranking (top states):")
-    for opp, weight in optimised[:5]:
-        print(f"  {opp.event_id} {opp.market} {opp.team_or_player}: {weight:.2%}")
+    if ranking:
+        display = solver_name.replace("_", " ")
+        print(f"\n{display.title()} ranking (top states):")
+        for opp, weight in ranking[:5]:
+            print(f"  {opp.event_id} {opp.market} {opp.team_or_player}: {weight:.2%}")
     print("\nPortfolio allocations:")
     for position in manager.positions:
         opp = position.opportunity
@@ -359,11 +437,11 @@ def _portfolio_allocation(
             f" {opp.market} {opp.team_or_player} @ {opp.american_odds:+d}"
         )
     print("\nExposure by event:")
-    print(json.dumps(manager.exposure_report(), indent=2, default=str))
+    print(json.dumps(_stringify_keys(manager.exposure_report()), indent=2, default=str))
     correlation = manager.correlation_report()
     if correlation:
         print("\nCorrelation exposure:")
-        print(json.dumps(correlation, indent=2, default=str))
+        print(json.dumps(_stringify_keys(correlation), indent=2, default=str))
     limits = manager.correlation_limits
     if limits:
         print("\nCorrelation limits:")
@@ -479,6 +557,20 @@ def _configure_ingest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--retry-backoff", type=float)
 
 
+def _configure_optimizer_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--optimizer", dest="optimizer_solver")
+    parser.add_argument("--optimizer-risk-aversion", type=float)
+    parser.add_argument("--optimizer-seed", type=int)
+    parser.add_argument("--optimizer-shots", type=int)
+    parser.add_argument("--optimizer-temperature", type=float)
+    parser.add_argument("--optimizer-annealing-steps", type=int)
+    parser.add_argument("--optimizer-initial-temp", type=float)
+    parser.add_argument("--optimizer-cooling-rate", type=float)
+    parser.add_argument("--optimizer-qaoa-layers", type=int)
+    parser.add_argument("--optimizer-qaoa-gamma", type=float)
+    parser.add_argument("--optimizer-qaoa-beta", type=float)
+
+
 def _configure_simulate_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--bankroll", type=float)
@@ -491,6 +583,7 @@ def _configure_simulate_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--correlation-limit", action="append")
     parser.add_argument("--risk-trials", type=int)
     parser.add_argument("--risk-seed", type=int)
+    _configure_optimizer_parser(parser)
 
 
 def _configure_scan_parser(parser: argparse.ArgumentParser) -> None:
@@ -512,6 +605,7 @@ def _configure_dashboard_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--correlation-limit", action="append")
     parser.add_argument("--risk-trials", type=int)
     parser.add_argument("--risk-seed", type=int)
+    _configure_optimizer_parser(parser)
 
 
 def _configure_compare_parser(parser: argparse.ArgumentParser) -> None:
@@ -537,6 +631,17 @@ def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--schedule", choices=["weekly", "seasonal"])
+    parser.add_argument("--snapshots")
+    parser.add_argument("--reports-dir")
+    parser.add_argument("--start-season", type=int)
+    parser.add_argument("--end-season", type=int)
+    parser.add_argument("--start-week", type=int)
+    parser.add_argument("--end-week", type=int)
+    parser.add_argument("--interval", type=float)
+    parser.add_argument("--jitter", type=float)
+    parser.add_argument("--retries", type=int)
+    parser.add_argument("--retry-backoff", type=float)
 
 
 def _configure_validate_parser(parser: argparse.ArgumentParser) -> None:
@@ -595,6 +700,27 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
         args.risk_trials = analytics.risk_trials
     if hasattr(args, "risk_seed") and args.risk_seed is None:
         args.risk_seed = analytics.risk_seed
+
+    optimizer_cfg = analytics.optimizer
+
+    def _set_default(name: str, value: object) -> None:
+        if hasattr(args, name):
+            if getattr(args, name) is None:
+                setattr(args, name, value)
+        else:
+            setattr(args, name, value)
+
+    _set_default("optimizer_solver", optimizer_cfg.solver)
+    _set_default("optimizer_risk_aversion", optimizer_cfg.risk_aversion)
+    _set_default("optimizer_seed", optimizer_cfg.seed)
+    _set_default("optimizer_shots", optimizer_cfg.shots)
+    _set_default("optimizer_temperature", optimizer_cfg.temperature)
+    _set_default("optimizer_annealing_steps", optimizer_cfg.annealing_steps)
+    _set_default("optimizer_initial_temp", optimizer_cfg.annealing_initial_temp)
+    _set_default("optimizer_cooling_rate", optimizer_cfg.annealing_cooling_rate)
+    _set_default("optimizer_qaoa_layers", optimizer_cfg.qaoa_layers)
+    _set_default("optimizer_qaoa_gamma", optimizer_cfg.qaoa_gamma)
+    _set_default("optimizer_qaoa_beta", optimizer_cfg.qaoa_beta)
 
 
 @APP.command(
@@ -675,6 +801,7 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
         kelly_fraction=args.kelly_fraction,
     )
     _render_opportunities(opportunities)
+    optimizer, risk_aversion, solver_name = _resolve_optimizer(context.config, args)
     manager, simulation = _portfolio_allocation(
         opportunities,
         bankroll=args.bankroll,
@@ -682,6 +809,9 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
         correlation_limits=correlation_limits,
         risk_trials=args.risk_trials,
         risk_seed=args.risk_seed,
+        optimizer=optimizer,
+        risk_aversion=risk_aversion,
+        solver_name=solver_name,
     )
     movements = _line_movement(
         service,
@@ -745,13 +875,16 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         alert_manager=alert_manager,
         kelly_fraction=args.kelly_fraction,
     )
-    manager, simulation = _build_portfolio(
+    optimizer, risk_aversion, _solver_name = _resolve_optimizer(context.config, args)
+    manager, simulation, _ranking = _build_portfolio(
         opportunities,
         bankroll=args.bankroll,
         portfolio_fraction=args.portfolio_fraction,
         correlation_limits=correlation_limits,
         risk_trials=args.risk_trials,
         risk_seed=args.risk_seed,
+        optimizer=optimizer,
+        risk_aversion=risk_aversion,
     )
     dashboard_comparison = compare_optimizers(
         opportunities,
@@ -837,6 +970,45 @@ async def _cmd_compare_optimizers(
 async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
+    if args.schedule:
+        if not args.snapshots:
+            raise SystemExit("--snapshots must be provided when scheduling backtests")
+        cadence = cast(Literal["weekly", "seasonal"], args.schedule)
+        snapshot_root = Path(args.snapshots).expanduser()
+        reports_root = Path(args.reports_dir or "reports/backtesting").expanduser()
+        schedule_config = BacktestScheduleConfig(
+            snapshot_root=snapshot_root,
+            output_root=reports_root,
+            cadence=cadence,
+            start_season=args.start_season,
+            end_season=args.end_season,
+            start_week=args.start_week if cadence == "weekly" else None,
+            end_week=args.end_week if cadence == "weekly" else None,
+            alert_manager=alert_manager,
+        )
+        orchestrator = BacktestOrchestrator(schedule_config)
+        interval = float(args.interval or 0.0)
+        if interval <= 0.0:
+            await orchestrator.run_once()
+            return
+        jitter = float(args.jitter or 0.0)
+        retries = int(args.retries or 0)
+        retry_backoff = float(args.retry_backoff or 2.0)
+        async with Scheduler() as scheduler:
+            scheduler.add_job(
+                orchestrator.run_once,
+                interval=interval,
+                jitter=jitter,
+                retries=retries,
+                retry_backoff=retry_backoff,
+                name=f"backtest-{cadence}",
+            )
+            install_signal_handlers(scheduler.stop)
+            print(
+                f"Starting {cadence} backtest scheduler. Press Ctrl+C to stop.",
+            )
+            await scheduler.run()
+        return
     history = service.load_history(limit=args.limit)
     if not history:
         history = await _ensure_history(service, alert_manager, limit=args.limit)

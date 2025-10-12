@@ -59,6 +59,54 @@ class CommandSpec:
     handler: CommandHandler
 
 
+class CommandRegistry:
+    """Registry that wires handlers into an :class:`argparse` parser."""
+
+    def __init__(self) -> None:
+        self._commands: list[CommandSpec] = []
+
+    def command(
+        self,
+        name: str,
+        *,
+        help: str,
+        configure: Callable[[argparse.ArgumentParser], None],
+    ) -> Callable[[CommandHandler], CommandHandler]:
+        """Register ``handler`` as a sub-command with configuration callback."""
+
+        def _decorator(handler: CommandHandler) -> CommandHandler:
+            self._commands.append(
+                CommandSpec(name=name, help=help, configure=configure, handler=handler)
+            )
+            return handler
+
+        return _decorator
+
+    @property
+    def commands(self) -> Sequence[CommandSpec]:
+        return tuple(self._commands)
+
+    def build_parser(self) -> argparse.ArgumentParser:
+        parent = argparse.ArgumentParser(add_help=False)
+        parent.add_argument("--config", dest="config_file")
+        parent.add_argument("--environment", dest="config_environment")
+        parent.add_argument("--storage")
+        parent.add_argument("--alerts-config")
+
+        parser = argparse.ArgumentParser(description=__doc__)
+        subparsers = parser.add_subparsers(dest="command", required=True)
+        for spec in self._commands:
+            subparser = subparsers.add_parser(
+                spec.name, parents=[parent], help=spec.help
+            )
+            spec.configure(subparser)
+            subparser.set_defaults(handler=spec.handler, command=spec.name)
+        return parser
+
+
+COMMANDS = CommandRegistry()
+
+
 def _build_engine(teams: Iterable[str], iterations: int) -> MonteCarloEngine:
     ratings: Dict[str, TeamRating] = {}
     for index, team in enumerate(sorted(set(teams))):
@@ -424,6 +472,11 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
     if hasattr(args, "risk_seed") and args.risk_seed is None:
         args.risk_seed = analytics.risk_seed
 
+@COMMANDS.command(
+    "ingest",
+    help="Collect odds",
+    configure=_configure_ingest_parser,
+)
 async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
@@ -433,28 +486,29 @@ async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None
         print(f"Ingested {len(stored)} quotes into {args.storage}")
         return
 
-    scheduler = Scheduler()
+    async with Scheduler() as scheduler:
+        async def _collect() -> None:
+            await service.fetch_and_store()
+            _maybe_alert_ingestion_health(service, alert_manager)
 
-    async def _collect() -> None:
-        await service.fetch_and_store()
-        _maybe_alert_ingestion_health(service, alert_manager)
-
-    scheduler.add_job(
-        _collect,
-        interval=args.interval,
-        jitter=args.jitter,
-        retries=args.retries,
-        retry_backoff=args.retry_backoff,
-        name="odds-ingest",
-    )
-    install_signal_handlers(scheduler.stop)
-    print("Starting ingestion scheduler. Press Ctrl+C to stop.")
-    try:
+        scheduler.add_job(
+            _collect,
+            interval=args.interval,
+            jitter=args.jitter,
+            retries=args.retries,
+            retry_backoff=args.retry_backoff,
+            name="odds-ingest",
+        )
+        install_signal_handlers(scheduler.stop)
+        print("Starting ingestion scheduler. Press Ctrl+C to stop.")
         await scheduler.run()
-    finally:
-        await scheduler.shutdown()
 
 
+@COMMANDS.command(
+    "simulate",
+    help="Simulate markets and rank opportunities",
+    configure=_configure_simulate_parser,
+)
 async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
@@ -495,6 +549,11 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
     _print_line_movements(movements)
 
 
+@COMMANDS.command(
+    "scan",
+    help="Scan stored markets for edges and movement",
+    configure=_configure_scan_parser,
+)
 async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
@@ -522,6 +581,11 @@ async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
     _print_line_movements(movements)
 
 
+@COMMANDS.command(
+    "dashboard",
+    help="Render the ASCII dashboard",
+    configure=_configure_dashboard_parser,
+)
 async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
@@ -566,6 +630,11 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
     print(rendered)
 
 
+@COMMANDS.command(
+    "backtest",
+    help="Replay historical odds and summarise expected value",
+    configure=_configure_backtest_parser,
+)
 async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
@@ -606,55 +675,7 @@ async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> No
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parent = argparse.ArgumentParser(add_help=False)
-    parent.add_argument("--config", dest="config_file")
-    parent.add_argument("--environment", dest="config_environment")
-    parent.add_argument("--storage")
-    parent.add_argument("--alerts-config")
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    commands: list[CommandSpec] = [
-        CommandSpec(
-            name="ingest",
-            help="Collect odds",
-            configure=_configure_ingest_parser,
-            handler=_cmd_ingest,
-        ),
-        CommandSpec(
-            name="simulate",
-            help="Simulate markets and rank opportunities",
-            configure=_configure_simulate_parser,
-            handler=_cmd_simulate,
-        ),
-        CommandSpec(
-            name="scan",
-            help="Scan stored markets for edges and movement",
-            configure=_configure_scan_parser,
-            handler=_cmd_scan,
-        ),
-        CommandSpec(
-            name="dashboard",
-            help="Render the ASCII dashboard",
-            configure=_configure_dashboard_parser,
-            handler=_cmd_dashboard,
-        ),
-        CommandSpec(
-            name="backtest",
-            help="Replay historical odds and summarise expected value",
-            configure=_configure_backtest_parser,
-            handler=_cmd_backtest,
-        ),
-    ]
-
-    for command in commands:
-        parser_kwargs = dict(parents=[parent], help=command.help)
-        subparser = subparsers.add_parser(command.name, **parser_kwargs)
-        command.configure(subparser)
-        subparser.set_defaults(handler=command.handler)
-
-    return parser
+    return COMMANDS.build_parser()
 
 
 async def _dispatch(args: argparse.Namespace) -> None:

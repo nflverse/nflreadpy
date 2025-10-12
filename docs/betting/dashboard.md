@@ -10,6 +10,13 @@ The terminal experience is optimised for analysts who prefer a keyboard-driven
 workflow, while the web interface focuses on rich visualisations for market
 surveillance.
 
+Both front ends share a common state layer implemented in
+`nflreadpy.betting.dashboard_core`.  The module exposes
+`DashboardFilters`, `DashboardSearchState`, and the ladder matrix utilities used
+to render line ladders.  Custom automation can import these primitives directly
+to apply consistent filter logic when running bespoke reports or building
+alternative user interfaces.
+
 ## Terminal dashboard
 
 The `Dashboard` class renders ASCII panels summarising active simulations,

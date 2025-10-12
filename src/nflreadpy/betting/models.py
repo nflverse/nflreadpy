@@ -17,6 +17,21 @@ try:  # Optional scientific backends
 except Exception:  # pragma: no cover - numpy is optional
     _np = None
 
+try:  # pragma: no cover - optional JAX acceleration backend
+    import jax as _jax  # type: ignore
+    import jax.numpy as _jnp  # type: ignore
+    from jax import jit as _jax_jit  # type: ignore
+    from jax import vmap as _jax_vmap  # type: ignore
+    from jax import device_get as _jax_device_get  # type: ignore
+    import jax.scipy.special as _jsp_special  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    _jax = None
+    _jnp = None  # type: ignore[assignment]
+    _jax_jit = None  # type: ignore[assignment]
+    _jax_vmap = None  # type: ignore[assignment]
+    _jax_device_get = None  # type: ignore[assignment]
+    _jsp_special = None  # type: ignore[assignment]
+
 try:  # pragma: no cover - numba accelerates vectorised loops when available
     import numba as _numba  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -58,6 +73,49 @@ if _numba is not None and _np is not None:  # pragma: no cover - compiled at run
 else:  # pragma: no cover - fallback when numba unavailable
 
     _numba_bivariate_poisson_kernel = None  # type: ignore[assignment]
+
+
+if (
+    _jnp is not None
+    and _jax_jit is not None
+    and _jax_vmap is not None
+    and _jsp_special is not None
+):
+
+    @_jax_jit(static_argnums=(3, 4))  # type: ignore[misc]
+    def _jax_bivariate_poisson_kernel(
+        lam1: float, lam2: float, lam3: float, max_home: int, max_away: int
+    ):
+        base = _jnp.exp(-(lam1 + lam2 + lam3))
+
+        def _factorial_term(value):
+            return _jnp.exp(_jsp_special.gammaln(value + 1.0))
+
+        def compute_entry(home_count: int, away_count: int):
+            limit = _jnp.minimum(home_count, away_count)
+            ks = _jnp.arange(limit + 1, dtype=_jnp.int32)
+            home_exponent = _jnp.maximum(0, home_count - ks).astype(_jnp.float64)
+            away_exponent = _jnp.maximum(0, away_count - ks).astype(_jnp.float64)
+            shared_exponent = ks.astype(_jnp.float64)
+            home_term = _jnp.power(lam1, home_exponent)
+            away_term = _jnp.power(lam2, away_exponent)
+            shared_term = _jnp.power(lam3, shared_exponent)
+            denom_home = _factorial_term(home_exponent)
+            denom_away = _factorial_term(away_exponent)
+            denom_shared = _factorial_term(shared_exponent)
+            term = base * home_term * away_term * shared_term
+            term /= denom_home * denom_away * denom_shared
+            return _jnp.sum(term)
+
+        home_range = _jnp.arange(max_home + 1)
+        away_range = _jnp.arange(max_away + 1)
+        row_fn = lambda h: _jax_vmap(lambda a: compute_entry(h, a))(away_range)
+        grid = _jax_vmap(row_fn)(home_range)
+        return grid
+
+else:  # pragma: no cover - fallback when JAX unavailable
+
+    _jax_bivariate_poisson_kernel = None  # type: ignore[assignment]
 
 
 logger = logging.getLogger(__name__)
@@ -638,12 +696,15 @@ class BivariatePoissonEngine:
         self.calibrator = BivariatePoissonCalibrator(history)
         self._numpy = _np if _np is not None else None
         self._numba_kernel = _numba_bivariate_poisson_kernel if _numba_bivariate_poisson_kernel is not None else None
+        self._jax_kernel = _jax_bivariate_poisson_kernel if _jax_bivariate_poisson_kernel is not None else None
         requested = backend.lower()
         self._backend = "python"
-        if requested not in {"auto", "python", "numpy", "numba"}:
+        if requested not in {"auto", "python", "numpy", "numba", "jax"}:
             raise ValueError(f"Unsupported backend {backend!r}")
         if requested in {"auto", "numba"} and self._numba_kernel is not None:
             self._backend = "numba"
+        elif requested in {"auto", "jax"} and self._jax_kernel is not None:
+            self._backend = "jax"
         elif requested in {"auto", "numpy"} and self._numpy is not None:
             self._backend = "numpy"
         else:
@@ -652,6 +713,8 @@ class BivariatePoissonEngine:
                 logger.warning(
                     "Numba backend requested but unavailable; falling back to python"
                 )
+            if requested == "jax" and self._jax_kernel is None:
+                logger.warning("JAX backend requested but unavailable; falling back to python")
             if requested == "numpy" and self._numpy is None:
                 logger.warning(
                     "Requested numpy backend but numpy is unavailable; falling back to python"
@@ -815,10 +878,15 @@ class BivariatePoissonEngine:
                 self.simulate_game(event_id, home, away)
                 simulations += 1
         elapsed = time.perf_counter() - start
-        backend = self._backend if self._backend in {"numpy", "numba"} else "python"
+        backend = self._backend if self._backend in {"numpy", "numba", "jax"} else "python"
         benchmark = SimulationBenchmark(backend=backend, simulations_run=simulations, elapsed_seconds=elapsed)
         if benchmark.per_minute < 1_000_000:
-            suggestion = "numpy" if self._backend == "python" and self._numpy is not None else "numba"
+            if self._backend == "python" and self._numpy is not None:
+                suggestion = "numpy"
+            elif self._backend == "python" and self._jax_kernel is not None:
+                suggestion = "jax"
+            else:
+                suggestion = "numba"
             logger.debug(
                 "Benchmark throughput %.0f sims/minute below target; consider enabling %s backend",
                 benchmark.per_minute,
@@ -837,6 +905,8 @@ class BivariatePoissonEngine:
         max_away = max(max_away, 20)
         if self._backend == "numba" and self._numba_kernel is not None:
             return self._joint_distribution_numba(params, max_home, max_away)
+        if self._backend == "jax" and self._jax_kernel is not None:
+            return self._joint_distribution_jax(params, max_home, max_away)
         if self._backend == "numpy" and self._numpy is not None:
             return self._joint_distribution_numpy(params, max_home, max_away)
         return self._joint_distribution_python(params, max_home, max_away)
@@ -873,6 +943,39 @@ class BivariatePoissonEngine:
                     )
                     total += term
                 distribution[(home, away)] = total
+        return distribution
+
+    def _joint_distribution_jax(
+        self,
+        params: BivariatePoissonParameters,
+        max_home: int,
+        max_away: int,
+    ) -> Dict[tuple[int, int], float]:
+        kernel = self._jax_kernel
+        if kernel is None:
+            return self._joint_distribution_python(params, max_home, max_away)
+        grid = kernel(
+            float(params.lambda_home),
+            float(params.lambda_away),
+            float(params.lambda_shared),
+            int(max_home),
+            int(max_away),
+        )
+        if _jax_device_get is not None:
+            grid = _jax_device_get(grid)
+        distribution: Dict[tuple[int, int], float] = {}
+        total = 0.0
+        for home in range(grid.shape[0]):
+            for away in range(grid.shape[1]):
+                probability = float(grid[home, away])
+                if probability <= 0.0:
+                    continue
+                distribution[(int(home), int(away))] = probability
+                total += probability
+        if total > 0.0:
+            scale = 1.0 / total
+            for key in list(distribution.keys()):
+                distribution[key] *= scale
         return distribution
 
     def _joint_distribution_numba(

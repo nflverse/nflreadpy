@@ -10,12 +10,12 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     import polars as pl
 
 from ..analytics import Opportunity
-from ..dashboard import (
-    Dashboard,
+from ..dashboard import Dashboard
+from ..dashboard_core import (
     DashboardFilters,
-    _is_half_scope,
-    _is_quarter_scope,
-    _normalize_scope,
+    is_half_scope,
+    is_quarter_scope,
+    normalize_scope,
 )
 from ..ingestion import IngestedOdds
 
@@ -441,10 +441,10 @@ def _line_point_matches(point: LineMovementPoint, filters: DashboardFilters) -> 
         return False
     if filters.markets and point.market not in filters.markets:
         return False
-    scope = _normalize_scope(point.scope)
-    if not filters.include_quarters and _is_quarter_scope(scope):
+    scope = normalize_scope(point.scope)
+    if not filters.include_quarters and is_quarter_scope(scope):
         return False
-    if not filters.include_halves and _is_half_scope(scope):
+    if not filters.include_halves and is_half_scope(scope):
         return False
     if filters.scopes and scope not in filters.scopes:
         return False
@@ -464,10 +464,10 @@ def _position_matches(position: PortfolioPosition, filters: DashboardFilters) ->
         return False
     if filters.markets and position.market not in filters.markets:
         return False
-    scope = _normalize_scope(position.scope)
-    if not filters.include_quarters and _is_quarter_scope(scope):
+    scope = normalize_scope(position.scope)
+    if not filters.include_quarters and is_quarter_scope(scope):
         return False
-    if not filters.include_halves and _is_half_scope(scope):
+    if not filters.include_halves and is_half_scope(scope):
         return False
     if filters.scopes and scope not in filters.scopes:
         return False

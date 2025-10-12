@@ -31,7 +31,7 @@ from .compliance import (
     ComplianceEngine,
     ResponsibleGamingControls,
 )
-from .dashboard import Dashboard
+from .dashboard import Dashboard, TerminalDashboardSession
 from .ingestion import OddsIngestionService
 from .models import (
     GameSimulationConfig,
@@ -55,6 +55,7 @@ from .scrapers.mock import MockSportsbookScraper
 __all__ = [
     "AlertManager",
     "Dashboard",
+    "TerminalDashboardSession",
     "ComplianceConfig",
     "ComplianceEngine",
     "EdgeDetector",

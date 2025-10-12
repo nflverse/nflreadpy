@@ -38,6 +38,12 @@ dependencies = [
 pandas = [
     "pandas>=1.5.0",
 ]
+betting = [
+    "streamlit>=1.35.0",
+    "fastapi>=0.110.0",
+    "uvicorn>=0.23.0",
+    "httpx>=0.27.0",
+]
 
 [project.scripts]
 nflreadpy-betting = "nflreadpy.betting.cli:main"

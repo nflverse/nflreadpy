@@ -67,6 +67,9 @@ def _build_pydantic_stub() -> types.ModuleType:
 @pytest.fixture()
 def cli_module(monkeypatch: pytest.MonkeyPatch):
     module_name = "nflreadpy.betting.cli"
+    betting_modules_before = {
+        name for name in sys.modules if name.startswith("nflreadpy.betting")
+    }
     monkeypatch.setitem(sys.modules, "yaml", _build_yaml_stub())
     monkeypatch.setitem(sys.modules, "pydantic", _build_pydantic_stub())
 
@@ -78,6 +81,9 @@ def cli_module(monkeypatch: pytest.MonkeyPatch):
         yield module
     finally:
         sys.modules.pop(module_name, None)
+        for name in list(sys.modules):
+            if name.startswith("nflreadpy.betting") and name not in betting_modules_before:
+                sys.modules.pop(name, None)
 
 
 @pytest.mark.parametrize("command", ["ingest", "simulate", "scan", "dashboard", "backtest"])

@@ -63,7 +63,7 @@ pydantic_stub.BaseModel = _StubBaseModel
 pydantic_stub.Field = _stub_field
 sys.modules.setdefault("pydantic", pydantic_stub)
 
-from nflreadpy.betting import cli
+from nflreadpy.betting import cli  # noqa: E402 - requires patched dependencies above
 
 
 @pytest.mark.parametrize("command", ["ingest", "simulate", "scan", "dashboard", "backtest"])
@@ -90,7 +90,7 @@ def test_ingest_command_uses_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
             self.jobs: list[dict[str, object]] = []
             events.append("initialised")
 
-        async def __aenter__(self) -> "DummyScheduler":
+        async def __aenter__(self) -> DummyScheduler:
             events.append("entered")
             return self
 

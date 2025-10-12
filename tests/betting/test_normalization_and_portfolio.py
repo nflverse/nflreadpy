@@ -1,6 +1,8 @@
 import asyncio
 import datetime as dt
 
+import pytest
+
 from nflreadpy.betting import (
     LineMovementAnalyzer,
     NameNormalizer,
@@ -9,8 +11,6 @@ from nflreadpy.betting import (
 )
 from nflreadpy.betting.analytics import KellyCriterion, Opportunity
 from nflreadpy.betting.ingestion import IngestedOdds
-import pytest
-
 from nflreadpy.betting.scrapers.base import (
     MultiScraperCoordinator,
     OddsQuote,

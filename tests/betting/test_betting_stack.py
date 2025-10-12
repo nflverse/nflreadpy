@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -28,7 +28,7 @@ from nflreadpy.betting.scrapers.base import (
 
 
 def test_http_scrapers_normalise_and_best_price(
-    http_scrapers: List[SportsbookScraper],
+    http_scrapers: list[SportsbookScraper],
 ) -> None:
     coordinator = MultiScraperCoordinator(http_scrapers)
     quotes = asyncio.run(coordinator.collect_once())
@@ -240,7 +240,9 @@ def test_either_probability_uses_covariance() -> None:
     independence = 1.0 - (1.0 - single_a.win) * (1.0 - single_b.win)
     assert abs(probability.win - independence) > 1e-3
 
-def test_ingestion_fetch_and_store(ingestion: OddsIngestionService, static_quotes: List[OddsQuote]) -> None:
+def test_ingestion_fetch_and_store(
+    ingestion: OddsIngestionService, static_quotes: list[OddsQuote]
+) -> None:
     stored = asyncio.run(ingestion.fetch_and_store())
     assert len(stored) == len(static_quotes)
     loaded = ingestion.load_latest("2024-NE-NYJ")
@@ -262,7 +264,7 @@ def test_simulation_supports_multiple_markets(simulation: SimulationResult) -> N
 
 
 def test_edge_detector_identifies_varied_edges(
-    static_quotes: List[OddsQuote],
+    static_quotes: list[OddsQuote],
     simulation: SimulationResult,
     player_model: PlayerPropForecaster,
 ) -> None:
@@ -274,8 +276,8 @@ def test_edge_detector_identifies_varied_edges(
 
 def test_service_metrics_and_validation(
     tmp_db_path: Path,
-    scraper_configs: List[Dict[str, Any]],
-    alert_sink: "RecordingAlertSink",
+    scraper_configs: list[dict[str, Any]],
+    alert_sink: Any,
 ) -> None:
     service = OddsIngestionService(
         scrapers=None,
@@ -307,7 +309,7 @@ def test_service_metrics_and_validation(
 
 
 def test_dashboard_renders_sections(
-    static_quotes: List[OddsQuote],
+    static_quotes: list[OddsQuote],
     simulation: SimulationResult,
     player_model: PlayerPropForecaster,
 ) -> None:

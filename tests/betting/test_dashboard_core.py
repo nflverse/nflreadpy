@@ -6,8 +6,8 @@ import datetime as dt
 import pytest
 
 from nflreadpy.betting.dashboard_core import (
-    DashboardFilters,
     DEFAULT_SEARCH_TARGETS,
+    DashboardFilters,
     build_ladder_matrix,
     is_half_scope,
     is_quarter_scope,

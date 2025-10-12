@@ -2,9 +2,9 @@
 
 import pytest
 
-pl = pytest.importorskip("polars")
-
 import nflreadpy as nfl
+
+pl = pytest.importorskip("polars")
 
 
 class TestImports:

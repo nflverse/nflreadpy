@@ -73,7 +73,7 @@ class ComplianceConfig:
     def from_mapping(cls, payload: Mapping[str, object]) -> "ComplianceConfig":
         """Construct configuration from a mapping (e.g. parsed YAML)."""
 
-        def _to_set(key: str) -> set[str] | None:
+        def _to_set(key: str, *, lower: bool = True) -> set[str] | None:
             value = payload.get(key)
             if value is None:
                 return None
@@ -83,12 +83,15 @@ class ComplianceConfig:
                 items = value  # type: ignore[assignment]
             else:  # pragma: no cover - defensive
                 raise TypeError(f"{key} must be a string or iterable of strings")
-            return {str(item).strip().lower() for item in items if str(item).strip()}
+            cleaned = [str(item).strip() for item in items if str(item).strip()]
+            if lower:
+                return {item.lower() for item in cleaned}
+            return set(cleaned)
 
         allowed_push = _to_set("allowed_push_handling")
         requirements = cls._coerce_credential_map(payload.get("credential_requirements"))
         available = cls._coerce_credential_map(payload.get("credentials_available"))
-        required_metadata = _to_set("required_metadata_fields") or set()
+        required_metadata = _to_set("required_metadata_fields", lower=False) or set()
 
         return cls(
             allowed_push_handling=allowed_push or cls().allowed_push_handling,

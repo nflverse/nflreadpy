@@ -51,6 +51,19 @@ from .configuration import (
 )
 
 
+def _stringify_keys(mapping: Mapping[object, object]) -> Dict[str, object]:
+    """Convert dictionary keys to JSON-safe string representations."""
+
+    normalised: Dict[str, object] = {}
+    for key, value in mapping.items():
+        if isinstance(key, tuple):
+            key_text = " | ".join(str(part) for part in key)
+        else:
+            key_text = str(key)
+        normalised[key_text] = value
+    return normalised
+
+
 @dataclasses.dataclass(slots=True)
 class CommandContext:
     """Runtime objects shared across command handlers."""
@@ -357,11 +370,11 @@ def _portfolio_allocation(
             f" {opp.market} {opp.team_or_player} @ {opp.american_odds:+d}"
         )
     print("\nExposure by event:")
-    print(json.dumps(manager.exposure_report(), indent=2, default=str))
+    print(json.dumps(_stringify_keys(manager.exposure_report()), indent=2, default=str))
     correlation = manager.correlation_report()
     if correlation:
         print("\nCorrelation exposure:")
-        print(json.dumps(correlation, indent=2, default=str))
+        print(json.dumps(_stringify_keys(correlation), indent=2, default=str))
     limits = manager.correlation_limits
     if limits:
         print("\nCorrelation limits:")

@@ -273,12 +273,13 @@ class KellyCriterion:
 
     fractional_kelly: float = 1.0
     cap: float | None = None
+    _last_fraction: float | None = dataclasses.field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.fractional_kelly = max(0.0, float(self.fractional_kelly))
         if self.cap is not None:
             self.cap = max(0.0, float(self.cap))
-        self._last_fraction: float | None = None
+        self._last_fraction = None
 
     @property
     def last_fraction(self) -> float | None:
@@ -543,7 +544,7 @@ class EdgeDetector:
             for (quote, _base_probability, _sim_result), adj_probability, expected_value in zip(
                 evaluations, adjusted_probabilities, expected_values
             ):
-                if expected_value < self.value_threshold:
+                if self.value_threshold > 0.0 and expected_value < self.value_threshold:
                     continue
                 implied = quote.implied_probability()
                 kelly = KellyCriterion.fraction(adj_probability.win, adj_probability.loss, quote.american_odds)

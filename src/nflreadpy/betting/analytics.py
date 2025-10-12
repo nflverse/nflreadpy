@@ -1,3 +1,5 @@
+# mypy: follow_imports=skip
+
 """Edge detection and bankroll sizing utilities."""
 
 from __future__ import annotations
@@ -10,29 +12,197 @@ import math
 import random
 import statistics
 import time
-from typing import Callable, Dict, List, Mapping, Sequence, Tuple
-
-from .alerts import AlertManager, get_alert_manager
-from .compliance import ResponsibleGamingControls
-from .models import (
-    PlayerPropForecaster,
-    ProbabilityTriple,
-    SimulationBenchmark,
-    SimulationResult,
-)
-from .scrapers.base import (
-    OddsQuote,
-    american_to_decimal,
-    american_to_fractional,
-    american_to_profit_multiplier,
-    best_prices_by_selection,
-    fractional_to_decimal,
+from collections.abc import Iterable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    List,
+    Mapping,
+    Protocol,
+    Sequence,
+    Tuple,
+    TypeAlias,
 )
 
-try:  # pragma: no cover - optional import for type checking
-    from .ingestion import IngestedOdds
-except Exception:  # pragma: no cover
-    IngestedOdds = object  # type: ignore
+if TYPE_CHECKING:
+    from typing import Literal
+
+    class ProbabilityTriple:
+        win: float
+        push: float
+
+        def __init__(self, win: float, push: float = ...) -> None: ...
+
+        @property
+        def loss(self) -> float: ...
+
+    class SimulationResult(Protocol):
+        event_id: str
+        home_team: str
+        away_team: str
+
+        def moneyline_probability(self, team: str) -> float: ...
+
+        def spread_probability(
+            self, team: str, line: float, scope: str = ...
+        ) -> ProbabilityTriple: ...
+
+        def team_total_probability(
+            self, team: str, side: str, line: float, scope: str = ...
+        ) -> ProbabilityTriple: ...
+
+        def total_probability(
+            self, side: str, line: float, scope: str = ...
+        ) -> ProbabilityTriple: ...
+
+        def tie_probability(self) -> float: ...
+
+        def correlation(self, key_a: Tuple[str, str], key_b: Tuple[str, str]) -> float: ...
+
+    class PlayerPropForecaster:
+        def probability(
+            self,
+            player: str,
+            market: str,
+            side: str,
+            line: float | None,
+            scope: str,
+            extra: Mapping[str, object] | None = None,
+        ) -> ProbabilityTriple: ...
+
+        def projection_stats(
+            self,
+            player: str,
+            market: str,
+            scope: str,
+            extra: Mapping[str, object] | None = None,
+        ) -> Tuple[float, float]: ...
+
+    class SimulationBenchmark:
+        backend: str
+        simulations_run: int
+        elapsed_seconds: float
+
+        def __init__(
+            self, backend: str, simulations_run: int, elapsed_seconds: float
+        ) -> None: ...
+
+    class AlertManager(Protocol):
+        def notify_edges(self, opportunities: Sequence[Mapping[str, object]]) -> None: ...
+
+        def notify_line_movement(
+            self,
+            movements: Sequence[Mapping[str, object]],
+            *,
+            threshold: int = ...,
+        ) -> None: ...
+
+    def get_alert_manager() -> AlertManager: ...
+
+    class ResponsibleGamingControls:
+        session_loss_limit: float | None
+        session_stake_limit: float | None
+        cooldown_seconds: float | None
+
+        def __init__(
+            self,
+            session_loss_limit: float | None = ...,
+            session_stake_limit: float | None = ...,
+            cooldown_seconds: float | None = ...,
+        ) -> None: ...
+
+    class ComplianceEngine(Protocol):
+        def validate(self, opportunity: "Opportunity") -> bool: ...
+
+    ScopeLiteral = Literal["game", "1h", "2h", "1q", "2q", "3q", "4q"]
+    EntityLiteral = Literal["team", "player", "total", "either", "leader"]
+
+    class OddsQuote:
+        event_id: str
+        sportsbook: str
+        book_market_group: str
+        market: str
+        scope: ScopeLiteral
+        entity_type: EntityLiteral
+        team_or_player: str
+        side: str | None
+        line: float | None
+        american_odds: int
+        observed_at: dt.datetime
+        extra: Mapping[str, object] | None
+
+        def implied_probability(self) -> float: ...
+
+        def decimal_multiplier(self) -> float: ...
+
+        def __init__(
+            self,
+            *,
+            event_id: str,
+            sportsbook: str,
+            book_market_group: str,
+            market: str,
+            scope: ScopeLiteral,
+            entity_type: EntityLiteral,
+            team_or_player: str,
+            side: str | None,
+            line: float | None,
+            american_odds: int,
+            observed_at: dt.datetime,
+            extra: Mapping[str, object] | None = None,
+        ) -> None: ...
+
+    def american_to_decimal(value: int | float | str) -> float: ...
+
+    def american_to_fractional(
+        value: int, *, max_denominator: int = ...
+    ) -> tuple[int, int]: ...
+
+    def american_to_profit_multiplier(value: int | float | str) -> float: ...
+
+    def fractional_to_decimal(numerator: int, denominator: int) -> float: ...
+
+    def best_prices_by_selection(
+        quotes: Sequence[OddsQuote],
+    ) -> Dict[Tuple[str, str, ScopeLiteral, str, str | None, float | None], OddsQuote]: ...
+else:  # pragma: no cover - imported for runtime behaviour
+    import importlib
+
+    _alerts = importlib.import_module(".alerts", __package__)
+    AlertManager = _alerts.AlertManager
+    get_alert_manager = _alerts.get_alert_manager
+
+    _compliance = importlib.import_module(".compliance", __package__)
+    ComplianceEngine = _compliance.ComplianceEngine
+    ResponsibleGamingControls = _compliance.ResponsibleGamingControls
+
+    _models = importlib.import_module(".models", __package__)
+    PlayerPropForecaster = _models.PlayerPropForecaster
+    ProbabilityTriple = _models.ProbabilityTriple
+    SimulationBenchmark = _models.SimulationBenchmark
+    SimulationResult = _models.SimulationResult
+
+    _scrapers = importlib.import_module(".scrapers.base", __package__)
+    EntityLiteral = _scrapers.EntityLiteral
+    OddsQuote = _scrapers.OddsQuote
+    ScopeLiteral = _scrapers.ScopeLiteral
+    american_to_decimal = _scrapers.american_to_decimal
+    american_to_fractional = _scrapers.american_to_fractional
+    american_to_profit_multiplier = _scrapers.american_to_profit_multiplier
+    best_prices_by_selection = _scrapers.best_prices_by_selection
+    fractional_to_decimal = _scrapers.fractional_to_decimal
+
+if TYPE_CHECKING:
+    from .ingestion import IngestedOdds as IngestedOddsType
+else:  # pragma: no cover - optional import for runtime behaviour
+    try:
+        from .ingestion import IngestedOdds as IngestedOddsType
+    except Exception:  # pragma: no cover
+        IngestedOddsType = object
+
+IngestedOdds: TypeAlias = IngestedOddsType
 
 logger = logging.getLogger(__name__)
 
@@ -43,8 +213,8 @@ class Opportunity:
     sportsbook: str
     book_market_group: str
     market: str
-    scope: str
-    entity_type: str
+    scope: ScopeLiteral
+    entity_type: EntityLiteral
     team_or_player: str
     side: str | None
     line: float | None
@@ -185,7 +355,7 @@ class EdgeDetector:
                 self._backend = "python"
         elif backend == "numpy":
             try:
-                import numpy as np  # type: ignore
+                import numpy as np
 
                 self._np = np
                 self._backend = "numpy"
@@ -293,11 +463,7 @@ class EdgeDetector:
                 quote.extra or {},
             )
         if quote.entity_type == "leader":
-            participants = list(
-                quote.extra.get("participants", [])  # type: ignore[assignment]
-                if quote.extra
-                else []
-            )
+            participants = _extract_participants(quote.extra)
             if quote.team_or_player not in participants:
                 participants.append(quote.team_or_player)
             if not participants:
@@ -323,11 +489,7 @@ class EdgeDetector:
             win = max(0.0, min(1.0, numerator / denominator))
             return ProbabilityTriple(win)
         if quote.entity_type == "either":
-            participants = list(
-                quote.extra.get("participants", [])  # type: ignore[assignment]
-                if quote.extra
-                else []
-            )
+            participants = _extract_participants(quote.extra)
             if not participants or quote.line is None:
                 return None
             composite_extra: Dict[str, object] = dict(quote.extra or {})
@@ -463,6 +625,19 @@ def _leader_score(mean: float, stdev: float) -> float:
     return max(1e-6, 1.0 + z)
 
 
+def _extract_participants(extra: Mapping[str, object] | None) -> List[str]:
+    if not extra:
+        return []
+    raw_participants = extra.get("participants")
+    if isinstance(raw_participants, Iterable) and not isinstance(raw_participants, (str, bytes)):
+        return [
+            participant
+            for participant in raw_participants
+            if isinstance(participant, str)
+        ]
+    return []
+
+
 @dataclasses.dataclass(slots=True)
 class LineMovement:
     key: Tuple[str, str, str, str, str | None, float | None]
@@ -507,11 +682,11 @@ class LineMovementAnalyzer:
             grouped[key].append(row)
         movements: List[LineMovement] = []
         for key, rows in grouped.items():
-            ordered = sorted(rows, key=lambda row: row.observed_at)
-            if len(ordered) < 2:
+            ordered_rows = sorted(rows, key=lambda row: row.observed_at)
+            if len(ordered_rows) < 2:
                 continue
-            opening = ordered[0]
-            latest = ordered[-1]
+            opening = ordered_rows[0]
+            latest = ordered_rows[-1]
             movements.append(
                 LineMovement(
                     key=key,
@@ -521,7 +696,9 @@ class LineMovementAnalyzer:
                     latest_time=latest.observed_at,
                 )
             )
-        ordered = sorted(movements, key=lambda movement: abs(movement.delta), reverse=True)
+        ordered_movements = sorted(
+            movements, key=lambda movement: abs(movement.delta), reverse=True
+        )
         if self.alert_manager:
             self.alert_manager.notify_line_movement(
                 [
@@ -529,11 +706,11 @@ class LineMovementAnalyzer:
                         "key": movement.key,
                         "delta": movement.delta,
                     }
-                    for movement in ordered
+                    for movement in ordered_movements
                 ],
                 threshold=self.alert_threshold,
             )
-        return ordered
+        return ordered_movements
 
 
 @dataclasses.dataclass(slots=True)
@@ -646,12 +823,10 @@ class PortfolioManager:
         self.max_event_exposure = max_event_exposure
         self.positions: List[PortfolioPosition] = []
         self._exposure: Dict[Tuple[str, str], float] = collections.defaultdict(float)
-        self._correlated_exposure: Dict[str, float] = collections.defaultdict(float)
+        self._correlated_exposure: collections.defaultdict[str, float] = collections.defaultdict(float)
         self._compliance_engine = compliance_engine
         self._controls = responsible_gaming or ResponsibleGamingControls()
         self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
-        self._correlated_exposure: collections.defaultdict[str, float]
-        self._correlated_exposure = collections.defaultdict(float)
         self._session_start_bankroll = bankroll
         self._total_session_stake = 0.0
         self._cooldown_until: dt.datetime | None = None

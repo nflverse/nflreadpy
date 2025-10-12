@@ -33,6 +33,8 @@ from typing import (
 
 from ..normalization import NameNormalizer, default_normalizer
 
+OddsValue = int | float | str
+
 logger = logging.getLogger(__name__)
 
 ScopeLiteral = Literal[
@@ -47,7 +49,7 @@ ScopeLiteral = Literal[
 EntityLiteral = Literal["team", "player", "total", "either", "leader"]
 
 
-def normalise_american_odds(value: int | float | str) -> int:
+def normalise_american_odds(value: OddsValue) -> int:
     """Coerce American odds into a signed integer.
 
     Sportsbooks sometimes omit the ``+`` sign on positive numbers or expose
@@ -67,7 +69,7 @@ def normalise_american_odds(value: int | float | str) -> int:
     return int(f"+{stripped}")
 
 
-def american_to_decimal(value: int | float | str) -> float:
+def american_to_decimal(value: OddsValue) -> float:
     """Convert an American price into European decimal odds."""
 
     price = normalise_american_odds(value)
@@ -78,7 +80,7 @@ def american_to_decimal(value: int | float | str) -> float:
     return 1.0 + 100.0 / -price
 
 
-def american_to_profit_multiplier(value: int | float | str) -> float:
+def american_to_profit_multiplier(value: OddsValue) -> float:
     """Return the net profit multiplier for a one-unit stake at American odds."""
 
     price = normalise_american_odds(value)
@@ -119,7 +121,9 @@ def decimal_to_fractional(decimal_odds: float, *, max_denominator: int = 512) ->
     return fraction.numerator, fraction.denominator
 
 
-def american_to_fractional(value: int | float | str, *, max_denominator: int = 512) -> Tuple[int, int]:
+def american_to_fractional(
+    value: OddsValue, *, max_denominator: int = 512
+) -> Tuple[int, int]:
     """Convert American odds to fractional form."""
 
     decimal = american_to_decimal(value)
@@ -145,6 +149,13 @@ def implied_probability_from_fractional(numerator: int, denominator: int) -> flo
     """Return the implied probability from fractional odds."""
 
     decimal = fractional_to_decimal(numerator, denominator)
+    return implied_probability_from_decimal(decimal)
+
+
+def implied_probability_from_american(value: OddsValue) -> float:
+    """Return the implied probability from American odds."""
+
+    decimal = american_to_decimal(value)
     return implied_probability_from_decimal(decimal)
 
 

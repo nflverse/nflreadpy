@@ -10,7 +10,7 @@ import math
 import random
 import statistics
 import time
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Callable, Dict, List, Mapping, Sequence, Tuple
 
 from .alerts import AlertManager, get_alert_manager
 from .compliance import ResponsibleGamingControls
@@ -22,8 +22,11 @@ from .models import (
 )
 from .scrapers.base import (
     OddsQuote,
+    american_to_decimal,
+    american_to_fractional,
     american_to_profit_multiplier,
     best_prices_by_selection,
+    fractional_to_decimal,
 )
 
 try:  # pragma: no cover - optional import for type checking
@@ -53,6 +56,23 @@ class Opportunity:
     kelly_fraction: float
     extra: Mapping[str, object]
 
+    def decimal_odds(self) -> float:
+        """Return decimal odds for the quoted American price."""
+
+        return american_to_decimal(self.american_odds)
+
+    def fractional_odds(self, *, max_denominator: int = 512) -> tuple[int, int]:
+        """Return fractional odds matching the quoted American price."""
+
+        return american_to_fractional(
+            self.american_odds, max_denominator=max_denominator
+        )
+
+    def decimal_multiplier(self) -> float:
+        """Expose the profit multiplier used for EV calculations."""
+
+        return american_to_profit_multiplier(self.american_odds)
+
 
 class KellyCriterion:
     """Utility for computing fractional Kelly bet sizes."""
@@ -61,18 +81,76 @@ class KellyCriterion:
     def fraction(
         win_probability: float,
         loss_probability: float,
-        price: int,
+        price: int | float | str,
         *,
         fractional_kelly: float = 1.0,
         cap: float | None = None,
     ) -> float:
-        if price == 0:
-            raise ValueError("American odds cannot be zero")
-        b = price / 100.0 if price > 0 else 100.0 / -price
-        numerator = b * win_probability - loss_probability
+        multiplier = american_to_profit_multiplier(price)
+        return KellyCriterion._fraction_from_multiplier(
+            win_probability,
+            loss_probability,
+            multiplier,
+            fractional_kelly=fractional_kelly,
+            cap=cap,
+        )
+
+    @staticmethod
+    def fraction_from_decimal(
+        win_probability: float,
+        loss_probability: float,
+        decimal_odds: float,
+        *,
+        fractional_kelly: float = 1.0,
+        cap: float | None = None,
+    ) -> float:
+        if decimal_odds <= 1.0:
+            raise ValueError("Decimal odds must exceed 1.0")
+        multiplier = decimal_odds - 1.0
+        return KellyCriterion._fraction_from_multiplier(
+            win_probability,
+            loss_probability,
+            multiplier,
+            fractional_kelly=fractional_kelly,
+            cap=cap,
+        )
+
+    @staticmethod
+    def fraction_from_fractional(
+        win_probability: float,
+        loss_probability: float,
+        numerator: int,
+        denominator: int,
+        *,
+        fractional_kelly: float = 1.0,
+        cap: float | None = None,
+    ) -> float:
+        decimal = fractional_to_decimal(numerator, denominator)
+        return KellyCriterion.fraction_from_decimal(
+            win_probability,
+            loss_probability,
+            decimal,
+            fractional_kelly=fractional_kelly,
+            cap=cap,
+        )
+
+    @staticmethod
+    def _fraction_from_multiplier(
+        win_probability: float,
+        loss_probability: float,
+        profit_multiplier: float,
+        *,
+        fractional_kelly: float = 1.0,
+        cap: float | None = None,
+    ) -> float:
+        if profit_multiplier <= 0.0:
+            raise ValueError("Profit multiplier must be positive")
+        win = max(0.0, min(1.0, win_probability))
+        loss = max(0.0, loss_probability)
+        numerator = profit_multiplier * win - loss
         if numerator <= 0:
             return 0.0
-        kelly = numerator / b
+        kelly = numerator / profit_multiplier
         scaled = max(0.0, kelly) * max(0.0, fractional_kelly)
         if cap is not None:
             scaled = min(cap, scaled)
@@ -713,7 +791,7 @@ class PortfolioManager:
             balances = [bankroll]
             for position in sample_positions:
                 opportunity = position.opportunity
-                payout = american_to_profit_multiplier(opportunity.american_odds)
+                payout = opportunity.decimal_multiplier()
                 win_prob = max(0.0, min(1.0, opportunity.model_probability))
                 push_prob = max(0.0, min(1.0 - win_prob, opportunity.push_probability))
                 roll = rng.random()

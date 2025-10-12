@@ -18,8 +18,10 @@ from nflreadpy.betting.scrapers.base import (
     american_to_decimal,
     american_to_fractional,
     decimal_to_american,
+    decimal_to_fractional,
     fractional_to_american,
     fractional_to_decimal,
+    implied_probability_from_american,
     implied_probability_from_decimal,
     implied_probability_from_fractional,
 )
@@ -93,11 +95,14 @@ def test_odds_conversion_helpers_roundtrip() -> None:
     decimal = american_to_decimal(+150)
     assert decimal == pytest.approx(2.5)
     assert decimal_to_american(decimal) == 150
+    decimal_fraction = decimal_to_fractional(decimal)
+    assert decimal_fraction == (3, 2)
     frac = american_to_fractional(-120)
     assert fractional_to_decimal(*frac) == pytest.approx(1.0 + 5 / 6)
     assert fractional_to_american(*frac) == -120
     assert implied_probability_from_decimal(decimal) == pytest.approx(0.4)
     assert implied_probability_from_fractional(*frac) == pytest.approx(0.54545, rel=1e-4)
+    assert implied_probability_from_american(+150) == pytest.approx(0.4)
 
 
 def test_kelly_fraction_respects_fractional_multiplier() -> None:
@@ -106,6 +111,18 @@ def test_kelly_fraction_respects_fractional_multiplier() -> None:
     assert half == pytest.approx(base * 0.5)
     capped = KellyCriterion.fraction(0.55, 0.45, +100, cap=0.05)
     assert capped <= 0.05
+
+
+def test_kelly_fraction_supports_multiple_odds_formats() -> None:
+    american = KellyCriterion.fraction(0.55, 0.45, +120)
+    decimal = KellyCriterion.fraction_from_decimal(0.55, 0.45, 2.2)
+    fractional = KellyCriterion.fraction_from_fractional(0.55, 0.45, 6, 5)
+    assert decimal == pytest.approx(american)
+    assert fractional == pytest.approx(american)
+    scaled = KellyCriterion.fraction_from_decimal(
+        0.55, 0.45, 2.2, fractional_kelly=0.5
+    )
+    assert scaled == pytest.approx(decimal * 0.5)
 
 
 def test_portfolio_manager_correlation_and_simulation() -> None:
@@ -143,6 +160,9 @@ def test_portfolio_manager_correlation_and_simulation() -> None:
     assert simulation.terminal_balances[0] == pytest.approx(150.0)
     summary = simulation.summary()
     assert summary["average_drawdown"] == pytest.approx(0.0)
+    assert summary["trials"] == pytest.approx(3.0)
+    assert summary["worst_terminal"] <= summary["mean_terminal"]
+    assert summary["p95_drawdown"] >= summary["p05_drawdown"]
 def test_line_movement_analyzer_orders_by_magnitude() -> None:
     timestamp = dt.datetime(2024, 9, 1, tzinfo=dt.timezone.utc)
     history = [

@@ -257,15 +257,19 @@ def _render_opportunities(opportunities: Sequence[Opportunity]) -> None:
         print("No actionable opportunities identified.")
         return
     header = (
-        f"{'Event':<16} {'Market':<20} {'Selection':<22} {'Odds':>6}"
-        f" {'Model P':>8} {'EV':>8} {'Kelly':>8}"
+        f"{'Event':<16} {'Market':<20} {'Selection':<22} {'US':>6}"
+        f" {'Dec':>6} {'Frac':>7} {'Model':>7} {'Imp':>7} {'EV':>8} {'Kelly':>8}"
     )
     print(header)
     print("-" * len(header))
     for opp in opportunities:
+        fractional_num, fractional_den = opp.fractional_odds()
+        fractional_display = f"{fractional_num}/{fractional_den}"
+        decimal = opp.decimal_odds()
         print(
             f"{opp.event_id:<16} {opp.market:<20} {opp.team_or_player:<22}"
-            f" {opp.american_odds:>+6d} {opp.model_probability:>8.3f}"
+            f" {opp.american_odds:>+6d} {decimal:>6.2f} {fractional_display:>7}"
+            f" {opp.model_probability:>7.3f} {opp.implied_probability:>7.3f}"
             f" {opp.expected_value:>8.3f} {opp.kelly_fraction:>8.3f}"
         )
 
@@ -308,21 +312,14 @@ def _portfolio_allocation(
     if simulation:
         summary = simulation.summary()
         print("\nBankroll simulation summary:")
-        print(
-            json.dumps(
-                {
-                    "trials": int(summary["trials"]),
-                    "mean_terminal": summary["mean_terminal"],
-                    "median_terminal": summary["median_terminal"],
-                    "worst_terminal": summary["worst_terminal"],
-                    "average_drawdown": summary["average_drawdown"],
-                    "worst_drawdown": summary["worst_drawdown"],
-                    "p05_drawdown": summary["p05_drawdown"],
-                    "p95_drawdown": summary["p95_drawdown"],
-                },
-                indent=2,
-            )
-        )
+        print(f"  Trials: {int(summary['trials'])}")
+        print(f"  Mean terminal: {summary['mean_terminal']:.2f}")
+        print(f"  Median terminal: {summary['median_terminal']:.2f}")
+        print(f"  Worst terminal: {summary['worst_terminal']:.2f}")
+        print(f"  Average drawdown: {summary['average_drawdown']:.2%}")
+        print(f"  Worst drawdown: {summary['worst_drawdown']:.2%}")
+        print(f"  5th percentile drawdown: {summary['p05_drawdown']:.2%}")
+        print(f"  95th percentile drawdown: {summary['p95_drawdown']:.2%}")
     return manager, simulation
 
 

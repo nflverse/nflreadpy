@@ -4,9 +4,16 @@ import datetime as dt
 
 import pytest
 
-from nflreadpy.betting.dashboard import Dashboard, TerminalDashboardSession, _build_ladder_matrix
+from nflreadpy.betting.dashboard import (
+    Dashboard,
+    DashboardSnapshot,
+    RiskSummary,
+    TerminalDashboardSession,
+    _build_ladder_matrix,
+)
+from nflreadpy.betting.dashboard_tui import DashboardKeyboardController
 from nflreadpy.betting import dashboard as dashboard_module
-from nflreadpy.betting.analytics import Opportunity
+from nflreadpy.betting.analytics import Opportunity, PortfolioPosition
 from nflreadpy.betting.ingestion import IngestedOdds
 from nflreadpy.betting.models import SimulationResult
 
@@ -71,6 +78,20 @@ def sample_opportunities() -> list[Opportunity]:
 
 
 @pytest.fixture
+def sample_risk_summary(sample_opportunities: list[Opportunity]) -> RiskSummary:
+    position = PortfolioPosition(opportunity=sample_opportunities[0], stake=50.0)
+    return RiskSummary(
+        bankroll=1000.0,
+        opportunity_fraction=0.05,
+        portfolio_fraction=0.1,
+        positions=(position,),
+        exposure_by_event={("KC@BUF", "moneyline"): 50.0},
+        correlation_exposure={"KC": 50.0},
+        simulation=None,
+    )
+
+
+@pytest.fixture
 def sample_simulation() -> list[SimulationResult]:
     return [
         SimulationResult(
@@ -98,7 +119,13 @@ def test_ladder_matrix(sample_quotes: list[IngestedOdds]) -> None:
     assert matrix["1sthalf"][-2.5] == -105
 
 
-def test_dashboard_snapshot(monkeypatch: pytest.MonkeyPatch, sample_quotes, sample_simulation, sample_opportunities) -> None:
+def test_dashboard_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    sample_quotes,
+    sample_simulation,
+    sample_opportunities,
+    sample_risk_summary,
+) -> None:
     class _FixedDateTime(dt.datetime):
         @classmethod
         def now(cls, tz=None):  # type: ignore[override]
@@ -107,8 +134,22 @@ def test_dashboard_snapshot(monkeypatch: pytest.MonkeyPatch, sample_quotes, samp
     monkeypatch.setattr(dashboard_module.dt, "datetime", _FixedDateTime)
     dashboard = Dashboard()
     dashboard.set_search("chiefs")
-    output = dashboard.render(sample_quotes, sample_simulation, sample_opportunities)
-    assert "NFL Terminal — 2024-01-21 13:30Z" in output
+    snapshot = dashboard.snapshot(
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+        risk_summary=sample_risk_summary,
+    )
+    assert isinstance(snapshot, DashboardSnapshot)
+    assert snapshot.header[0] == "NFL Terminal — 2024-01-21 13:30Z"
+    risk_panel = next(view for view in snapshot.panels if view.state.key == "risk")
+    assert any("Opportunity Kelly fraction" in line for line in risk_panel.body)
+    output = dashboard.render(
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+        risk_summary=sample_risk_summary,
+    )
     assert "Search Results" in output
     assert "Kansas City Chiefs" in output
 
@@ -122,3 +163,33 @@ def test_terminal_session_commands(sample_quotes, sample_simulation, sample_oppo
     assert "Kansas City Chiefs" in rendered
     cleared = session.handle("clear search", sample_quotes, sample_simulation, sample_opportunities)
     assert cleared == "Search cleared."
+
+
+def test_keyboard_controller(sample_quotes, sample_simulation, sample_opportunities, sample_risk_summary) -> None:
+    controller = DashboardKeyboardController()
+    snapshot = controller.refresh(
+        sample_quotes,
+        sample_simulation,
+        sample_opportunities,
+        risk_summary=sample_risk_summary,
+    )
+    assert isinstance(snapshot, DashboardSnapshot)
+    assert controller.current_panel_key == controller.panel_keys[0]
+    next_key = controller.focus_next_panel()
+    assert next_key == controller.panel_keys[1]
+    controller.toggle_current_panel()
+    assert controller.dashboard._panels[next_key].collapsed is True
+    controller.toggle_current_panel()
+    assert controller.dashboard._panels[next_key].collapsed is False
+    controller.toggle_quarters()
+    assert controller.dashboard.filters.include_quarters is False
+    controller.toggle_halves()
+    assert controller.dashboard.filters.include_halves is False
+    controller.apply_filter_expression("sportsbooks=FanDuel")
+    assert controller.dashboard.filters.sportsbooks == frozenset({"FanDuel"})
+    controller.apply_filter_expression("")
+    assert controller.dashboard.filters.sportsbooks is None
+    controller.apply_search("Chiefs")
+    assert controller.dashboard.search.query == "Chiefs"
+    controller.clear_search()
+    assert not controller.dashboard.search.query

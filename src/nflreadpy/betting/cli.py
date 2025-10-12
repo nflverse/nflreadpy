@@ -78,7 +78,7 @@ HandlerT = TypeVar("HandlerT", bound=CommandHandler)
 
 
 @dataclasses.dataclass(slots=True)
-class CommandSpec:
+class Subcommand:
     """Container describing a CLI sub-command."""
 
     name: str
@@ -87,12 +87,29 @@ class CommandSpec:
     handler: CommandHandler
     requires_service: bool
 
+    def add_to_parser(
+        self,
+        subparsers,
+        parent: argparse.ArgumentParser,
+    ) -> argparse.ArgumentParser:
+        """Create the parser for this subcommand."""
 
-class CommandRegistry:
+        parser = subparsers.add_parser(self.name, parents=[parent], help=self.help)
+        self.configure(parser)
+        parser.set_defaults(
+            handler=self.handler,
+            command=self.name,
+            requires_service=self.requires_service,
+        )
+        return parser
+
+
+class SubcommandApp:
     """Registry that wires handlers into an :class:`argparse` parser."""
 
-    def __init__(self) -> None:
-        self._commands: list[CommandSpec] = []
+    def __init__(self, description: str | None = None) -> None:
+        self._commands: list[Subcommand] = []
+        self._description = description
 
     def command(
         self,
@@ -110,7 +127,7 @@ class CommandRegistry:
             if not requires_service and not isinstance(handler, ConfigCommandHandler):
                 raise TypeError("Config-only commands must accept a configuration object")
             self._commands.append(
-                CommandSpec(
+                Subcommand(
                     name=name,
                     help=help,
                     configure=configure,
@@ -123,7 +140,7 @@ class CommandRegistry:
         return _decorator
 
     @property
-    def commands(self) -> Sequence[CommandSpec]:
+    def commands(self) -> Sequence[Subcommand]:
         return tuple(self._commands)
 
     def build_parser(self) -> argparse.ArgumentParser:
@@ -133,22 +150,14 @@ class CommandRegistry:
         parent.add_argument("--storage")
         parent.add_argument("--alerts-config")
 
-        parser = argparse.ArgumentParser(description=__doc__)
+        parser = argparse.ArgumentParser(description=self._description)
         subparsers = parser.add_subparsers(dest="command", required=True)
-        for spec in self._commands:
-            subparser = subparsers.add_parser(
-                spec.name, parents=[parent], help=spec.help
-            )
-            spec.configure(subparser)
-            subparser.set_defaults(
-                handler=spec.handler,
-                command=spec.name,
-                requires_service=spec.requires_service,
-            )
+        for command in self._commands:
+            command.add_to_parser(subparsers, parent)
         return parser
 
 
-COMMANDS = CommandRegistry()
+APP = SubcommandApp(description=__doc__)
 
 
 def _build_engine(teams: Iterable[str], iterations: int) -> MonteCarloEngine:
@@ -522,7 +531,7 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
         args.risk_seed = analytics.risk_seed
 
 
-@COMMANDS.command(
+@APP.command(
     "validate-config",
     help="Validate betting configuration",
     configure=_configure_validate_parser,
@@ -549,7 +558,7 @@ async def _cmd_validate_config(
             raise SystemExit(2)
 
 
-@COMMANDS.command(
+@APP.command(
     "ingest",
     help="Collect odds",
     configure=_configure_ingest_parser,
@@ -581,7 +590,7 @@ async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None
         await scheduler.run()
 
 
-@COMMANDS.command(
+@APP.command(
     "simulate",
     help="Simulate markets and rank opportunities",
     configure=_configure_simulate_parser,
@@ -626,7 +635,7 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
     _print_line_movements(movements)
 
 
-@COMMANDS.command(
+@APP.command(
     "scan",
     help="Scan stored markets for edges and movement",
     configure=_configure_scan_parser,
@@ -658,7 +667,7 @@ async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
     _print_line_movements(movements)
 
 
-@COMMANDS.command(
+@APP.command(
     "dashboard",
     help="Render the ASCII dashboard",
     configure=_configure_dashboard_parser,
@@ -707,7 +716,7 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
     print(rendered)
 
 
-@COMMANDS.command(
+@APP.command(
     "backtest",
     help="Replay historical odds and summarise expected value",
     configure=_configure_backtest_parser,
@@ -752,7 +761,7 @@ async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> No
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    return COMMANDS.build_parser()
+    return APP.build_parser()
 
 
 async def _dispatch(args: argparse.Namespace) -> None:

@@ -1,9 +1,14 @@
 # Betting Dashboards
 
 nflreadpy ships with two complementary dashboards for monitoring real-time
-markets, simulation output, and portfolio risk.  The terminal experience is
-optimised for analysts who prefer a keyboard-driven workflow, while the web
-interface focuses on rich visualisations for market surveillance.
+markets, simulation output, and portfolio risk. Before launching either
+experience make sure you have followed the [setup](setup.md) and
+[configuration](configuration.md) guides so that ingestion workers and models
+are providing fresh data.
+
+The terminal experience is optimised for analysts who prefer a keyboard-driven
+workflow, while the web interface focuses on rich visualisations for market
+surveillance.
 
 ## Terminal dashboard
 
@@ -121,3 +126,10 @@ uvicorn nflreadpy.betting.web.api:create_api_app --factory
 
 The factory expects a `DashboardDataProvider` instance supplied via the
 `--factory` hook; see the module docstrings for an example provider.
+
+## Operational tips
+
+- Use the [CLI utilities](cli.md) to inspect opportunities or export data when
+  the dashboards are not available.
+- Review the [operations guide](operations.md) for recommended metrics and
+  alerting rules that keep the dashboards healthy.

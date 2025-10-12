@@ -11,7 +11,6 @@ theme:
     code: IBM Plex Mono
   logo: assets/nflverse.png
   favicon: assets/nflverse.png
-
   palette:
     - scheme: default
       primary: black
@@ -43,8 +42,13 @@ nav:
     - Cache Management: api/cache.md
     - Utilities: api/utils.md
   - Betting:
+    - Setup: betting/setup.md
+    - Configuration: betting/configuration.md
+    - CLI: betting/cli.md
     - Compliance & Risk: betting/compliance.md
     - Dashboards: betting/dashboard.md
+    - Developer Extension Points: betting/extensibility.md
+    - Operations: betting/operations.md
   - Changelog: CHANGELOG.md
   - Automation Status: https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html
   - Data Dictionaries: https://nflreadr.nflverse.com/articles/index.html

@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 import datetime as dt
 import random
-from typing import List, Sequence
+from collections.abc import Sequence
 
 from .base import OddsQuote, SportsbookScraper, normalise_american_odds
 
@@ -92,9 +92,9 @@ class MockSportsbookScraper(SportsbookScraper):
             )
         return fixtures
 
-    async def _fetch_lines_impl(self) -> List[OddsQuote]:
+    async def _fetch_lines_impl(self) -> list[OddsQuote]:
         now = dt.datetime.now(dt.timezone.utc)
-        quotes: List[OddsQuote] = []
+        quotes: list[OddsQuote] = []
         for fixture in self._fixtures:
             quotes.extend(self._moneyline_quotes(fixture, now))
             quotes.extend(self._spread_quotes(fixture, now))
@@ -108,7 +108,7 @@ class MockSportsbookScraper(SportsbookScraper):
         await asyncio.sleep(0)
         return quotes
 
-    def _moneyline_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
+    def _moneyline_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
         home_price = fixture.home_moneyline
         away_price = -home_price if home_price < 0 else -(200 - home_price)
         return [
@@ -142,7 +142,7 @@ class MockSportsbookScraper(SportsbookScraper):
             ),
         ]
 
-    def _spread_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
+    def _spread_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
         main = [
             OddsQuote(
                 event_id=fixture.event_id,
@@ -173,7 +173,7 @@ class MockSportsbookScraper(SportsbookScraper):
                 extra={},
             ),
         ]
-        alt_lines = []
+        alt_lines: list[OddsQuote] = []
         for ladder in (-9.5, -3.5, 3.5, 9.5):
             price = normalise_american_odds(130 if ladder < 0 else 145)
             alt_lines.append(
@@ -210,8 +210,8 @@ class MockSportsbookScraper(SportsbookScraper):
             )
         return main + alt_lines
 
-    def _total_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
-        totals = []
+    def _total_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
+        totals: list[OddsQuote] = []
         for side, price in (("over", -108), ("under", -112)):
             totals.append(
                 OddsQuote(
@@ -264,10 +264,10 @@ class MockSportsbookScraper(SportsbookScraper):
             )
         return totals
 
-    def _team_total_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
+    def _team_total_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
         home_mean = fixture.total / 2 + fixture.spread / 2
         away_mean = fixture.total - home_mean
-        quotes = []
+        quotes: list[OddsQuote] = []
         for team, mean in (
             (fixture.home_team, home_mean),
             (fixture.away_team, away_mean),
@@ -291,7 +291,7 @@ class MockSportsbookScraper(SportsbookScraper):
                 )
         return quotes
 
-    def _player_prop_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
+    def _player_prop_quotes(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
         players = {
             fixture.home_team: [
                 ("Mac Jones", "passing_yards", 248.5, 0.58),
@@ -304,8 +304,8 @@ class MockSportsbookScraper(SportsbookScraper):
                 ("C.J. Uzomah", "record_sack", 0.5, 0.35),
             ],
         }
-        quotes: List[OddsQuote] = []
-        for team, props in players.items():
+        quotes: list[OddsQuote] = []
+        for _team, props in players.items():
             for player, market, line, model_prob in props:
                 if market == "record_sack":
                     quotes.append(
@@ -429,8 +429,8 @@ class MockSportsbookScraper(SportsbookScraper):
         )
         return quotes
 
-    def _scope_splits(self, fixture: _Fixture, timestamp: dt.datetime) -> List[OddsQuote]:
-        spreads: List[OddsQuote] = []
+    def _scope_splits(self, fixture: _Fixture, timestamp: dt.datetime) -> list[OddsQuote]:
+        spreads: list[OddsQuote] = []
         for scope, factor in (("1h", 0.52), ("1q", 0.27)):
             spreads.append(
                 OddsQuote(
@@ -500,8 +500,8 @@ class MockSportsbookScraper(SportsbookScraper):
 
     def _three_way_winners(
         self, fixture: _Fixture, timestamp: dt.datetime
-    ) -> List[OddsQuote]:
-        outcomes = []
+    ) -> list[OddsQuote]:
+        outcomes: list[OddsQuote] = []
         for scope, factor in (("game", 1.0), ("1h", 0.52), ("1q", 0.27)):
             outcomes.extend(
                 [
@@ -553,8 +553,8 @@ class MockSportsbookScraper(SportsbookScraper):
 
     def _leader_markets(
         self, fixture: _Fixture, timestamp: dt.datetime
-    ) -> List[OddsQuote]:
-        leaders: List[OddsQuote] = []
+    ) -> list[OddsQuote]:
+        leaders: list[OddsQuote] = []
         contenders = [
             "Mac Jones",
             "Patrick Mahomes",
@@ -583,8 +583,8 @@ class MockSportsbookScraper(SportsbookScraper):
 
     def _combo_props(
         self, fixture: _Fixture, timestamp: dt.datetime
-    ) -> List[OddsQuote]:
-        combos: List[OddsQuote] = []
+    ) -> list[OddsQuote]:
+        combos: list[OddsQuote] = []
         combos.append(
             OddsQuote(
                 event_id=fixture.event_id,

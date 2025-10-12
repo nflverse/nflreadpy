@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime as dt
+import random
 from typing import List, Sequence
 
 from .base import OddsQuote, SportsbookScraper, normalise_american_odds
@@ -25,33 +26,71 @@ class MockSportsbookScraper(SportsbookScraper):
 
     name = "mockbook"
 
+    _DEFAULT_FIXTURES: Sequence[_Fixture] = (
+        _Fixture(
+            event_id="2024-NE-NYJ",
+            home_team="NE",
+            away_team="NYJ",
+            home_moneyline=-145,
+            spread=-6.5,
+            total=41.5,
+        ),
+        _Fixture(
+            event_id="2024-DEN-KC",
+            home_team="DEN",
+            away_team="KC",
+            home_moneyline=+120,
+            spread=+3.0,
+            total=46.5,
+        ),
+    )
+
+    _SEED_FIXTURE_TEMPLATES: Sequence[tuple[str, str, str]] = (
+        ("2024-NE-NYJ", "NE", "NYJ"),
+        ("2024-DEN-KC", "DEN", "KC"),
+        ("2024-BUF-MIA", "BUF", "MIA"),
+        ("2024-PHI-DAL", "PHI", "DAL"),
+        ("2024-DET-GB", "DET", "GB"),
+    )
+
     def __init__(
         self,
         fixtures: Sequence[_Fixture] | None = None,
+        *,
+        seed: int | None = None,
     ) -> None:
         super().__init__()
         self.poll_interval_seconds = 5.0
-        self._fixtures = list(
-            fixtures
-            or [
+        self._rng = random.Random(seed) if seed is not None else None
+        if fixtures is not None:
+            self._fixtures = list(fixtures)
+        elif self._rng is not None:
+            self._fixtures = self._generate_seeded_fixtures()
+        else:
+            self._fixtures = list(self._DEFAULT_FIXTURES)
+
+    def _generate_seeded_fixtures(self) -> list[_Fixture]:
+        assert self._rng is not None
+        fixtures: list[_Fixture] = []
+        for event_id, home, away in self._SEED_FIXTURE_TEMPLATES:
+            home_moneyline = self._rng.choice(
+                [-185, -170, -150, -135, -120, -110, -105, 100, 115, 130, 145, 165]
+            )
+            spread = self._rng.choice(
+                [-9.5, -7.5, -6.5, -3.5, -1.5, 0.0, 1.5, 3.5, 6.5, 9.5]
+            )
+            total = 36.5 + self._rng.randrange(0, 16)
+            fixtures.append(
                 _Fixture(
-                    event_id="2024-NE-NYJ",
-                    home_team="NE",
-                    away_team="NYJ",
-                    home_moneyline=-145,
-                    spread=-6.5,
-                    total=41.5,
-                ),
-                _Fixture(
-                    event_id="2024-DEN-KC",
-                    home_team="DEN",
-                    away_team="KC",
-                    home_moneyline=+120,
-                    spread=+3.0,
-                    total=46.5,
-                ),
-            ]
-        )
+                    event_id=event_id,
+                    home_team=home,
+                    away_team=away,
+                    home_moneyline=home_moneyline,
+                    spread=spread,
+                    total=total,
+                )
+            )
+        return fixtures
 
     async def _fetch_lines_impl(self) -> List[OddsQuote]:
         now = dt.datetime.now(dt.timezone.utc)

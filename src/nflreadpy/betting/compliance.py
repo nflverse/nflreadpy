@@ -33,6 +33,7 @@ class ComplianceConfig:
     credentials_available: dict[str, set[str]] = dataclasses.field(
         default_factory=dict
     )
+    required_metadata_fields: set[str] = dataclasses.field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.allowed_push_handling = {
@@ -49,6 +50,9 @@ class ComplianceConfig:
         self.credentials_available = self._normalise_credential_map(
             self.credentials_available
         )
+        self.required_metadata_fields = {
+            str(item).strip() for item in self.required_metadata_fields if str(item).strip()
+        }
 
     @staticmethod
     def _normalise_credential_map(
@@ -84,6 +88,7 @@ class ComplianceConfig:
         allowed_push = _to_set("allowed_push_handling")
         requirements = cls._coerce_credential_map(payload.get("credential_requirements"))
         available = cls._coerce_credential_map(payload.get("credentials_available"))
+        required_metadata = _to_set("required_metadata_fields") or set()
 
         return cls(
             allowed_push_handling=allowed_push or cls().allowed_push_handling,
@@ -92,6 +97,7 @@ class ComplianceConfig:
             banned_sportsbooks=_to_set("banned_sportsbooks") or set(),
             credential_requirements=requirements or {},
             credentials_available=available or {},
+            required_metadata_fields=required_metadata,
         )
 
     @classmethod
@@ -129,6 +135,9 @@ class ComplianceConfig:
         available = os.getenv(f"{prefix}CREDENTIALS_AVAILABLE")
         if available:
             payload["credentials_available"] = cls._parse_credential_env(available)
+        required_metadata = os.getenv(f"{prefix}REQUIRED_METADATA_FIELDS")
+        if required_metadata:
+            payload["required_metadata_fields"] = required_metadata
         return cls.from_mapping(payload)
 
     @staticmethod
@@ -314,6 +323,11 @@ class ComplianceEngine:
                 reasons.append(
                     "jurisdiction_not_permitted=" + ",".join(sorted(available))
                 )
+
+        if self.config.required_metadata_fields:
+            for field_name in self.config.required_metadata_fields:
+                if not metadata.get(field_name):
+                    reasons.append(f"metadata_missing={field_name}")
 
         return reasons
 

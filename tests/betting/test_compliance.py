@@ -176,3 +176,25 @@ def test_config_from_mapping_handles_yaml_payload() -> None:
     assert config.banned_sportsbooks == {"offshorebook"}
     assert config.credential_requirements["fanduel"] == {"session_token"}
     assert config.credentials_available["fanduel"] == {"session_token"}
+
+
+def test_evaluate_metadata_returns_reasons(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logger = logging.getLogger("test.audit.metadata")
+    config = ComplianceConfig(jurisdiction_allowlist={"co"})
+    engine = ComplianceEngine(config, audit_logger=logger)
+
+    caplog.set_level(logging.WARNING, logger="test.audit.metadata")
+    compliant, reasons = engine.evaluate_metadata(
+        sportsbook="book",
+        market="spread",
+        event_id="E1",
+        metadata={"jurisdictions": ["ny"]},
+        log=True,
+    )
+    assert not compliant
+    assert reasons
+    assert any(
+        rec.getMessage() == "compliance.violation" for rec in caplog.records
+    )

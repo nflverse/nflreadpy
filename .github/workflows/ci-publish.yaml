@@ -28,6 +28,9 @@ jobs:
       - name: Install the project
         run: uv sync --locked --all-extras --dev
 
+      - name: Verify betting changelog is up to date
+        run: python scripts/update_betting_changelog.py
+
       - name: Run build
         run: uv build
 

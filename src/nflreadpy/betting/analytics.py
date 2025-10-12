@@ -41,6 +41,8 @@ if TYPE_CHECKING:
         @property
         def loss(self) -> float: ...
 
+    from .quantum import PortfolioOptimizer
+
     class SimulationResult(Protocol):
         event_id: str
         home_team: str
@@ -1188,6 +1190,8 @@ class PortfolioManager:
         fractional_kelly: float = 1.0,
         correlation_limits: Mapping[str, float] | None = None,
         correlation_key: Callable[[Opportunity], str | None] | None = None,
+        optimizer: "PortfolioOptimizer[Opportunity]" | None = None,
+        default_risk_aversion: float = 0.4,
     ) -> None:
         self.bankroll = bankroll
         self.max_risk_per_bet = max_risk_per_bet
@@ -1205,6 +1209,11 @@ class PortfolioManager:
         self._correlation_limits = dict(correlation_limits or {})
         self._correlation_key = correlation_key or self._default_correlation_key
         self._last_simulation: BankrollSimulationResult | None = None
+        self._optimizer: "PortfolioOptimizer[Opportunity]" | None = None
+        self._optimizer_risk_aversion = max(0.0, default_risk_aversion)
+        self._last_ranking: List[Tuple[Opportunity, float]] = []
+        if optimizer is not None:
+            self.set_optimizer(optimizer, risk_aversion=default_risk_aversion)
 
     @property
     def correlation_limits(self) -> Dict[str, float]:
@@ -1218,12 +1227,52 @@ class PortfolioManager:
 
         return self._last_simulation
 
+    @property
+    def last_ranking(self) -> List[Tuple[Opportunity, float]]:
+        """Return the most recent optimiser output."""
+
+        return list(self._last_ranking)
+
     def bankroll_summary(self) -> Mapping[str, float] | None:
         """Return the summary metrics for the last bankroll simulation."""
 
         if not self._last_simulation:
             return None
         return self._last_simulation.summary()
+
+    def set_optimizer(
+        self,
+        optimizer: "PortfolioOptimizer[Opportunity]" | None,
+        *,
+        risk_aversion: float | None = None,
+    ) -> None:
+        """Configure the optimiser and default risk preference."""
+
+        self._optimizer = optimizer
+        if risk_aversion is not None:
+            self._optimizer_risk_aversion = max(0.0, risk_aversion)
+        if optimizer is None:
+            self._last_ranking = []
+
+    def rank_opportunities(
+        self,
+        opportunities: Sequence[Opportunity],
+        *,
+        risk_aversion: float | None = None,
+    ) -> List[Tuple[Opportunity, float]]:
+        """Compute optimiser-derived weights for ``opportunities``."""
+
+        if not opportunities or self._optimizer is None:
+            self._last_ranking = []
+            return []
+        preference = (
+            self._optimizer_risk_aversion
+            if risk_aversion is None
+            else max(0.0, risk_aversion)
+        )
+        ranking = self._optimizer.optimise(opportunities, risk_aversion=preference)
+        self._last_ranking = list(ranking)
+        return self.last_ranking
 
     def set_fractional_kelly(self, fractional_kelly: float) -> None:
         """Update the fractional Kelly multiplier applied to allocations."""

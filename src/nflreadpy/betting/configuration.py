@@ -6,7 +6,16 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Tuple,
+)
 
 import yaml
 from pydantic import BaseModel, Field
@@ -20,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from .analytics import EdgeDetector
     from .ingestion import OddsIngestionService
     from .scrapers.base import SportsbookScraper
+    from .quantum import PortfolioOptimizer
 
 
 class ScraperRuntimeConfig(BaseModel):
@@ -96,6 +106,7 @@ class AnalyticsConfig(BaseModel):
     history_limit: int = 256
     movement_threshold: int = 30
     iterations: IterationConfig = Field(default_factory=IterationConfig)
+    optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
 
 
 class FuzzyMatchingConfig(BaseModel):
@@ -324,6 +335,30 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
     if analytics.movement_threshold < 0:
         errors.append("analytics.movement_threshold must be non-negative")
 
+    optimizer_cfg = analytics.optimizer
+    if optimizer_cfg.risk_aversion < 0:
+        errors.append("analytics.optimizer.risk_aversion must be non-negative")
+    if optimizer_cfg.shots <= 0:
+        errors.append("analytics.optimizer.shots must be greater than zero")
+    if optimizer_cfg.temperature <= 0:
+        errors.append("analytics.optimizer.temperature must be greater than zero")
+    if optimizer_cfg.annealing_steps <= 0:
+        errors.append("analytics.optimizer.annealing_steps must be greater than zero")
+    if optimizer_cfg.annealing_initial_temp <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_initial_temp must be greater than zero"
+        )
+    if optimizer_cfg.annealing_cooling_rate <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_cooling_rate must be greater than zero"
+        )
+    if optimizer_cfg.qaoa_layers <= 0:
+        errors.append("analytics.optimizer.qaoa_layers must be greater than zero")
+    if optimizer_cfg.qaoa_gamma < 0:
+        errors.append("analytics.optimizer.qaoa_gamma must be non-negative")
+    if optimizer_cfg.qaoa_beta < 0:
+        errors.append("analytics.optimizer.qaoa_beta must be non-negative")
+
     for name, value in analytics.iterations.model_dump().items():
         if value <= 0:
             errors.append(f"analytics.iterations.{name} must be greater than zero")
@@ -480,6 +515,7 @@ __all__ = [
     "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",
+    "create_portfolio_optimizer",
     "create_scrapers_from_config",
     "load_betting_config",
 ]

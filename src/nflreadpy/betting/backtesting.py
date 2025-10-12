@@ -21,9 +21,11 @@ RowMapping = Mapping[str, Any]
 __all__ = [
     "BacktestArtifacts",
     "BacktestMetrics",
+    "comparison_performance_table",
     "Settlement",
     "SportsbookRules",
     "closing_line_table",
+    "load_comparison_history",
     "export_closing_line_report",
     "export_reliability_diagram",
     "get_sportsbook_rules",
@@ -308,6 +310,38 @@ def persist_backtest_reports(
     )
 
 
+def load_comparison_history(path: str | Path) -> pl.DataFrame:
+    """Load persisted optimizer comparison allocations."""
+
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(target)
+    files: list[Path]
+    if target.is_file():
+        files = [target]
+    else:
+        files = sorted(
+            [
+                candidate
+                for candidate in target.rglob("*")
+                if candidate.suffix.lower() in {".csv", ".parquet"}
+            ]
+        )
+    if not files:
+        raise ValueError(f"No comparison artefacts found under {target}")
+    frames: list[pl.DataFrame] = []
+    for file in files:
+        if file.suffix.lower() == ".csv":
+            frames.append(pl.read_csv(file))
+        elif file.suffix.lower() == ".parquet":
+            frames.append(pl.read_parquet(file))
+        else:  # pragma: no cover - defensive branch
+            raise ValueError(f"Unsupported comparison format: {file.suffix}")
+    if len(frames) == 1:
+        return frames[0]
+    return pl.concat(frames, how="vertical_relaxed")
+
+
 def _settle_row(
     row: RowMapping,
     *,
@@ -551,4 +585,54 @@ def settlements_to_frame(settlements: Sequence[Settlement]) -> pl.DataFrame:
     """Convert a collection of settlements into a Polars DataFrame."""
 
     return pl.DataFrame([dataclasses.asdict(item) for item in settlements])
+
+
+def comparison_performance_table(
+    settlements: Sequence[Settlement],
+    comparisons: pl.DataFrame,
+) -> pl.DataFrame:
+    """Augment comparison allocations with realised performance metrics."""
+
+    if comparisons.is_empty():
+        return comparisons
+    join_keys = [
+        "event_id",
+        "sportsbook",
+        "team_or_player",
+        "market",
+        "scope",
+        "side",
+        "line",
+        "american_odds",
+    ]
+    settlements_frame = settlements_to_frame(settlements)
+    if settlements_frame.is_empty():
+        joined = comparisons.with_columns(
+            pl.lit(None).alias("stake"),
+            pl.lit(None).alias("pnl"),
+        )
+    else:
+        joined = comparisons.join(
+            settlements_frame,
+            on=join_keys,
+            how="left",
+            suffix="_settlement",
+        )
+    safe = joined.with_columns(
+        pl.col("allocation_stake").fill_null(0.0),
+        pl.col("expected_value").fill_null(0.0),
+        pl.col("stake").fill_null(0.0),
+        pl.col("pnl").fill_null(0.0),
+    )
+    with_returns = safe.with_columns(
+        pl.when(pl.col("stake") != 0.0)
+        .then(pl.col("pnl") / pl.col("stake"))
+        .otherwise(0.0)
+        .alias("pnl_per_unit"),
+    )
+    enriched = with_returns.with_columns(
+        (pl.col("allocation_stake") * pl.col("expected_value")).alias("expected_pnl"),
+        (pl.col("allocation_stake") * pl.col("pnl_per_unit")).alias("realized_pnl"),
+    )
+    return enriched
 

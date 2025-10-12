@@ -608,6 +608,25 @@ def _configure_dashboard_parser(parser: argparse.ArgumentParser) -> None:
     _configure_optimizer_parser(parser)
 
 
+def _configure_compare_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--iterations", type=int)
+    parser.add_argument("--refresh", action="store_true", default=False)
+    parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--bankroll", type=float)
+    parser.add_argument("--portfolio-fraction", type=float)
+    parser.add_argument("--kelly-fraction", type=float)
+    parser.add_argument("--correlation-limit", action="append")
+    parser.add_argument("--max-risk-per-bet", type=float, default=0.02)
+    parser.add_argument("--max-event-exposure", type=float, default=0.1)
+    parser.add_argument("--risk-aversion", type=float, default=0.4)
+    parser.add_argument("--shots", type=int, default=512)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument("--target-total-stake", type=float)
+    parser.add_argument("--output-dir")
+    parser.add_argument("--run-id")
+
+
 def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--iterations", type=int)
@@ -867,6 +886,16 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         optimizer=optimizer,
         risk_aversion=risk_aversion,
     )
+    dashboard_comparison = compare_optimizers(
+        opportunities,
+        bankroll=args.bankroll,
+        fractional_kelly=args.portfolio_fraction,
+        max_risk_per_bet=manager.max_risk_per_bet,
+        max_event_exposure=manager.max_event_exposure,
+        correlation_limits=correlation_limits,
+        quantum_optimizer=QuantumPortfolioOptimizer(shots=256, seed=args.risk_seed),
+        metadata={"source": "dashboard"},
+    )
     dashboard = Dashboard()
     risk_summary = RiskSummary(
         bankroll=args.bankroll,
@@ -878,9 +907,59 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         correlation_limits=manager.correlation_limits,
         simulation=simulation,
         bankroll_summary=manager.bankroll_summary(),
+        optimizer_comparison=dashboard_comparison,
     )
     rendered = dashboard.render(latest, simulations, opportunities, risk_summary=risk_summary)
     print(rendered)
+
+
+@APP.command(
+    "compare-optimizers",
+    help="Compare classical bankroll management against the quantum heuristic",
+    configure=_configure_compare_parser,
+)
+async def _cmd_compare_optimizers(
+    context: CommandContext, args: argparse.Namespace
+) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
+    latest = await _ensure_latest(service, alert_manager, refresh=args.refresh)
+    quotes = _quotes_from_ingested(latest)
+    simulations = _run_simulations(quotes, args.iterations)
+    correlation_limits = _parse_correlation_limits(args.correlation_limit)
+    opportunities = _detect_opportunities(
+        quotes,
+        simulations,
+        config=context.config,
+        value_threshold=args.value_threshold,
+        alert_manager=alert_manager,
+        kelly_fraction=args.kelly_fraction,
+    )
+    optimizer = QuantumPortfolioOptimizer(
+        shots=args.shots,
+        temperature=args.temperature,
+        seed=args.seed,
+    )
+    comparison = compare_optimizers(
+        opportunities,
+        bankroll=args.bankroll,
+        fractional_kelly=args.portfolio_fraction,
+        max_risk_per_bet=args.max_risk_per_bet,
+        max_event_exposure=args.max_event_exposure,
+        correlation_limits=correlation_limits,
+        quantum_optimizer=optimizer,
+        risk_aversion=args.risk_aversion,
+        target_total_stake=args.target_total_stake,
+        metadata={"source": "cli"},
+        run_id=args.run_id,
+    )
+    print(json.dumps(comparison.to_summary_dict(), indent=2))
+    if args.output_dir:
+        summary_path, allocations_path = persist_optimizer_comparison(
+            comparison, args.output_dir
+        )
+        print(f"Summary saved to {summary_path}")
+        print(f"Allocations saved to {allocations_path}")
 
 
 @APP.command(

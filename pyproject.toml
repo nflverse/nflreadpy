@@ -38,6 +38,9 @@ dependencies = [
 pandas = [
     "pandas>=1.5.0",
 ]
+
+[project.scripts]
+nflreadpy-betting = "nflreadpy.betting.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=7.0.0",
@@ -108,6 +111,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "asyncio: mark tests that require the asyncio event loop",
+]
 
 [tool.coverage.run]
 source = ["src"]

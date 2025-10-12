@@ -49,6 +49,51 @@ team_stats = nfl.load_team_stats(seasons=True)
 pbp_pandas = pbp.to_pandas()
 ```
 
+### Experimental betting analytics toolkit
+
+The repository now ships with a Bloomberg-style research stack focused on
+NFL betting.  The entry point lives under ``nflreadpy.betting`` and
+provides:
+
+* **Asynchronous sportsbook scrapers** – the ``MockSportsbookScraper``
+  simulates line movement while concrete scraper subclasses can target
+  live operators.
+* **Persistent ingestion pipeline** – ``OddsIngestionService`` coordinates
+  scrapers and stores quotes in SQLite for historical analysis.
+* **Monte Carlo engine** – ``MonteCarloEngine`` uses Poisson scoring models
+  to derive win probabilities, margin/total distributions, and team-scoped
+  scoring curves across full game, half, and quarter scopes.
+* **Edge detection and bankroll sizing** – ``EdgeDetector`` compares model
+  probabilities with market prices and applies a Kelly sizing heuristic.
+* **Terminal dashboard** – ``Dashboard`` renders simulations and edge
+  opportunities in a Bloomberg-inspired ASCII layout for quick situational
+  awareness.
+* **Multi-book aggregation & normalisation** – ``MultiScraperCoordinator``
+  stitches together asynchronous scrapers while ``NameNormalizer`` aligns
+  teams, players, and sportsbook identifiers across feeds.
+* **Line movement & portfolio analytics** – ``LineMovementAnalyzer`` surfaces
+  steam, while ``PortfolioManager`` constrains exposure per market and
+  bankroll.
+* **Quantum-inspired allocator** – ``QuantumPortfolioOptimizer`` samples a
+  soft-quantum amplitude distribution to prioritise edges for further review.
+* **Command line harness** – ``python -m nflreadpy.betting.cli`` runs the full
+  ingestion → modeling → edge detection loop with portfolio recommendations and
+  movement summaries.
+
+Quotes are normalised into the rich schema requested in ``AGENTS.md``:
+
+``(book_market_group, market, scope, team_or_player, side, line, american_odds, extra)``
+
+and cover mainlines, alternate ladders, quarter/half splits, and player
+props (including either-player composites).  The probability layer supports
+moneylines, spreads, totals, team totals, alt ladders, leader markets, combo
+props, and prop tails via a combination of Monte Carlo distributions and
+lightweight player models.  Mock scrapers emit winner 3-way, reception ladders,
+player combo props, and leader markets to exercise the richer schema.
+
+See ``tests/betting/test_betting_stack.py`` for an end-to-end example of
+gluing the modules together without accessing external sportsbooks.
+
 ## Available Functions
 
 ### Core Loading Functions

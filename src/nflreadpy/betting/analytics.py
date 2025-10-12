@@ -568,6 +568,8 @@ class PortfolioManager:
         self._compliance_engine = compliance_engine
         self._controls = responsible_gaming or ResponsibleGamingControls()
         self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
+        self._correlated_exposure: collections.defaultdict[str, float]
+        self._correlated_exposure = collections.defaultdict(float)
         self._session_start_bankroll = bankroll
         self._total_session_stake = 0.0
         self._cooldown_until: dt.datetime | None = None

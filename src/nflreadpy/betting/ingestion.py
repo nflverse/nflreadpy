@@ -359,12 +359,25 @@ class OddsIngestionService:
                     quote.event_id,
                     reason,
                 )
+                self._audit_logger.warning(
+                    "ingestion.discarded",
+                    extra={
+                        "reason": reason,
+                        "event_id": quote.event_id,
+                        "sportsbook": quote.sportsbook,
+                        "market": quote.market,
+                    },
+                )
         self._last_validation_summary = dict(summary)
         if summary:
             self._audit_logger.warning(
                 "ingestion.validation_failed", extra={"discarded": dict(summary)}
             )
             logger.warning("Discarded quotes summary: %s", summary)
+            self._audit_logger.warning(
+                "ingestion.validation_failed",
+                extra={"discarded": dict(summary)},
+            )
         return valid
 
     def _update_metrics(

@@ -160,3 +160,19 @@ def test_config_from_env_parses_credentials(monkeypatch: pytest.MonkeyPatch) -> 
     config = ComplianceConfig.from_env()
     assert config.credential_requirements["book"] == {"session_token", "account_id"}
     assert config.credentials_available["book"] == {"session_token"}
+
+
+def test_config_from_mapping_handles_yaml_payload() -> None:
+    payload = {
+        "allowed_push_handling": ["Push", "Refund"],
+        "jurisdiction_allowlist": ["NJ", "NY"],
+        "banned_sportsbooks": ["OffshoreBook"],
+        "credential_requirements": {"FanDuel": ["session_token"]},
+        "credentials_available": {"FanDuel": ["Session_Token"]},
+    }
+    config = ComplianceConfig.from_mapping(payload)
+    assert config.allowed_push_handling == {"push", "refund"}
+    assert config.jurisdiction_allowlist == {"nj", "ny"}
+    assert config.banned_sportsbooks == {"offshorebook"}
+    assert config.credential_requirements["fanduel"] == {"session_token"}
+    assert config.credentials_available["fanduel"] == {"session_token"}

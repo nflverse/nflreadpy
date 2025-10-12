@@ -55,3 +55,13 @@ analytics:
     scan: 20000
     dashboard: 25000
     backtest: 12000
+
+normalization:
+  canonical_identifiers_path: /var/lib/nflreadpy/identifiers/betting_entities.json
+  fuzzy:
+    enabled: true
+    score_thresholds:
+      team: 92.0
+      player: 94.0
+      sportsbook: 88.0
+    ambiguity_margin: 7.5

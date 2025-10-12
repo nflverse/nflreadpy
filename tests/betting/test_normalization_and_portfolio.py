@@ -14,6 +14,7 @@ from nflreadpy.betting import (
 from nflreadpy.betting.analytics import KellyCriterion, Opportunity, PortfolioPosition
 from nflreadpy.betting.ingestion import IngestedOdds
 from nflreadpy.betting.scrapers.base import MultiScraperCoordinator, OddsQuote, StaticScraper
+from nflreadpy.betting.normalization import CanonicalEntry, CanonicalIdentifiers
 from nflreadpy.betting.utils import (
     american_to_decimal,
     american_to_fractional,
@@ -47,6 +48,46 @@ def test_name_normalizer_applies_aliases() -> None:
     normalised = normalizer.normalise_quote(quote)
     assert normalised.team_or_player == "NE"
     assert normalised.sportsbook == "draft_kings"
+
+
+def test_name_normalizer_fuzzy_resolution_uses_canonical_ids() -> None:
+    identifiers = CanonicalIdentifiers(
+        teams=(
+            CanonicalEntry("NE", "New England Patriots", ("patriots",)),
+            CanonicalEntry("NYJ", "New York Jets", ("jets",)),
+        ),
+        players=(
+            CanonicalEntry("Patrick Mahomes", "Patrick Mahomes", ("pat mahomes",)),
+        ),
+        sportsbooks=(
+            CanonicalEntry("draft_kings", "DraftKings", ("draft kings",)),
+        ),
+    )
+    normalizer = NameNormalizer(
+        identifiers=identifiers,
+        fuzzy_matching_enabled=True,
+        fuzzy_thresholds={"team": 70.0, "player": 70.0, "sportsbook": 60.0},
+    )
+    assert normalizer.canonical_team("new england pattriots") == "NE"
+    assert normalizer.canonical_player("pat mahomes") == "Patrick Mahomes"
+    assert normalizer.canonical_sportsbook("Draft Kingz") == "draft_kings"
+
+
+def test_name_normalizer_raises_for_ambiguous_fuzzy_matches() -> None:
+    identifiers = CanonicalIdentifiers(
+        teams=(
+            CanonicalEntry("NYJ", "New York Jets", ("Jets",)),
+            CanonicalEntry("NYG", "New York Giants", ("Giants",)),
+        ),
+    )
+    normalizer = NameNormalizer(
+        identifiers=identifiers,
+        fuzzy_matching_enabled=True,
+        fuzzy_thresholds={"team": 50.0},
+        fuzzy_ambiguity_margin=20.0,
+    )
+    with pytest.raises(ValueError, match="Ambiguous team 'New York'"):
+        normalizer.canonical_team("New York")
 
 
 def test_multi_scraper_coordinator_normalises_quotes() -> None:

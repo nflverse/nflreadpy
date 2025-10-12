@@ -59,6 +59,7 @@ class CommandSpec:
     help: str
     configure: Callable[[argparse.ArgumentParser], None]
     handler: CommandHandler
+    requires_service: bool
 
 
 class CommandRegistry:
@@ -73,12 +74,19 @@ class CommandRegistry:
         *,
         help: str,
         configure: Callable[[argparse.ArgumentParser], None],
+        requires_service: bool = True,
     ) -> Callable[[CommandHandler], CommandHandler]:
         """Register ``handler`` as a sub-command with configuration callback."""
 
         def _decorator(handler: CommandHandler) -> CommandHandler:
             self._commands.append(
-                CommandSpec(name=name, help=help, configure=configure, handler=handler)
+                CommandSpec(
+                    name=name,
+                    help=help,
+                    configure=configure,
+                    handler=handler,
+                    requires_service=requires_service,
+                )
             )
             return handler
 
@@ -102,7 +110,11 @@ class CommandRegistry:
                 spec.name, parents=[parent], help=spec.help
             )
             spec.configure(subparser)
-            subparser.set_defaults(handler=spec.handler, command=spec.name)
+            subparser.set_defaults(
+                handler=spec.handler,
+                command=spec.name,
+                requires_service=spec.requires_service,
+            )
         return parser
 
 
@@ -480,7 +492,15 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
         args.risk_seed = analytics.risk_seed
 
 
-async def _cmd_validate_config(config: BettingConfig, args: argparse.Namespace) -> None:
+@COMMANDS.command(
+    "validate-config",
+    help="Validate betting configuration",
+    configure=_configure_validate_parser,
+    requires_service=False,
+)
+async def _cmd_validate_config(
+    config: BettingConfig, args: argparse.Namespace
+) -> None:
     try:
         warnings = validate_betting_config(config)
     except ConfigurationError as exc:
@@ -745,4 +765,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 __all__ = ["main"]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
+    main()
 

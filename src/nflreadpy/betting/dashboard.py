@@ -9,12 +9,16 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import shlex
 from collections import defaultdict
 from typing import Iterable, Mapping, Sequence, Tuple
 
 from .analytics import BankrollSimulationResult, Opportunity, PortfolioPosition
 from .ingestion import IngestedOdds
 from .models import SimulationResult
+
+
+DEFAULT_SEARCH_TARGETS = frozenset({"quotes", "opportunities", "simulations"})
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -24,6 +28,45 @@ class DashboardPanelState:
     key: str
     title: str
     collapsed: bool = False
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class DashboardSearchState:
+    """Metadata describing the active dashboard search query."""
+
+    query: str | None = None
+    case_sensitive: bool = False
+    targets: frozenset[str] = dataclasses.field(default_factory=lambda: DEFAULT_SEARCH_TARGETS)
+
+    def normalised_query(self) -> str | None:
+        if self.query is None:
+            return None
+        return self.query if self.case_sensitive else self.query.lower()
+
+    def update(
+        self,
+        *,
+        query: str | None | object = dataclasses.MISSING,
+        case_sensitive: bool | object = dataclasses.MISSING,
+        targets: Iterable[str] | object = dataclasses.MISSING,
+    ) -> "DashboardSearchState":
+        payload: dict[str, object] = {}
+        if query is not dataclasses.MISSING:
+            payload["query"] = query
+        if case_sensitive is not dataclasses.MISSING:
+            payload["case_sensitive"] = bool(case_sensitive)
+        if targets is not dataclasses.MISSING:
+            payload["targets"] = DEFAULT_SEARCH_TARGETS if targets is None else frozenset(targets)
+        return dataclasses.replace(self, **payload)
+
+    def match(self, text: str) -> bool:
+        """Return ``True`` when ``text`` satisfies the current query."""
+
+        if not self.query:
+            return True
+        haystack = text if self.case_sensitive else text.lower()
+        needle = self.normalised_query()
+        return bool(needle and needle in haystack)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -135,23 +178,11 @@ class DashboardContext:
     """Container for filtered data passed to panel renderers."""
 
     filters: DashboardFilters
+    search: DashboardSearchState
     odds: Sequence[IngestedOdds]
     simulations: Sequence[SimulationResult]
     opportunities: Sequence[Opportunity]
-    risk_summary: "RiskSummary | None" = None
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class RiskSummary:
-    """Aggregate risk analytics for rendering in the dashboard."""
-
-    bankroll: float
-    opportunity_fraction: float
-    portfolio_fraction: float
-    positions: Tuple[PortfolioPosition, ...]
-    exposure_by_event: Mapping[Tuple[str, str], float]
-    correlation_exposure: Mapping[str, float]
-    simulation: BankrollSimulationResult | None = None
+    search_results: dict[str, Sequence[object]]
 
 
 class Dashboard:
@@ -159,6 +190,7 @@ class Dashboard:
 
     def __init__(self) -> None:
         self.filters = DashboardFilters()
+        self.search = DashboardSearchState()
         self._panel_order = [
             "controls",
             "simulations",
@@ -166,6 +198,7 @@ class Dashboard:
             "opportunities",
             "risk",
             "ladders",
+            "search",
         ]
         self._panels = {
             "controls": DashboardPanelState("controls", "Controls"),
@@ -174,6 +207,7 @@ class Dashboard:
             "opportunities": DashboardPanelState("opportunities", "Opportunities"),
             "risk": DashboardPanelState("risk", "Risk Management"),
             "ladders": DashboardPanelState("ladders", "Line Ladders"),
+            "search": DashboardPanelState("search", "Search Results"),
         }
 
     # ------------------------------------------------------------------
@@ -188,6 +222,21 @@ class Dashboard:
         """Reset all filters to their default state."""
 
         self.filters = DashboardFilters()
+
+    def set_search(self, query: str | None, *, case_sensitive: bool | None = None, targets: Iterable[str] | None = None) -> None:
+        """Set the active search query across dashboard panels."""
+
+        updates: dict[str, object] = {"query": query}
+        if case_sensitive is not None:
+            updates["case_sensitive"] = case_sensitive
+        if targets is not None:
+            updates["targets"] = frozenset(targets)
+        self.search = self.search.update(**updates)
+
+    def reset_search(self) -> None:
+        """Clear the active search query."""
+
+        self.search = DashboardSearchState()
 
     def toggle_quarters(self) -> bool:
         """Toggle quarter markets and return the new state."""
@@ -236,12 +285,14 @@ class Dashboard:
         filtered_odds = [quote for quote in odds if self.filters.match_odds(quote)]
         filtered_sims = [result for result in simulations if self.filters.match_simulation(result)]
         filtered_opps = [opp for opp in opportunities if self.filters.match_opportunity(opp)]
+        search_hits = self._apply_search(filtered_odds, filtered_sims, filtered_opps)
         context = DashboardContext(
             filters=self.filters,
+            search=self.search,
             odds=filtered_odds,
             simulations=filtered_sims,
             opportunities=filtered_opps,
-            risk_summary=risk_summary,
+            search_results=search_hits,
         )
 
         sections = ["\n".join(header)]
@@ -323,7 +374,7 @@ class Dashboard:
                 f"{quote.scope:<6}{quote.team_or_player:<20}{side_display:<6}{line_display:>6}"
                 f"{quote.american_odds:>7}{seen:>7}"
             )
-        return "\n".join(lines)
+            return "\n".join(lines)
 
     def _render_opportunities(self, context: DashboardContext) -> str:
         opportunities = context.opportunities
@@ -426,6 +477,88 @@ class Dashboard:
             sections.append("")
         return "\n".join(section for section in sections).strip()
 
+    def _render_search(self, context: DashboardContext) -> str:
+        query = context.search.query
+        if not query:
+            return "No active search query."
+        lines = [f"Query: {query!r}"]
+        if not any(context.search_results.values()):
+            lines.append("No matches found across active panels.")
+            return "\n".join(lines)
+        for bucket, matches in context.search_results.items():
+            if not matches:
+                continue
+            lines.append("")
+            lines.append(bucket.title())
+            lines.append("~" * len(bucket))
+            for match in matches[:10]:
+                if isinstance(match, IngestedOdds):
+                    seen = match.observed_at.strftime("%H:%M:%S")
+                    lines.append(
+                        f"{match.event_id} · {match.market} · {match.team_or_player}"
+                        f" @ {match.sportsbook} ({match.scope}, {match.american_odds:+d}) [{seen}]"
+                    )
+                elif isinstance(match, Opportunity):
+                    lines.append(
+                        f"{match.event_id} · {match.market} · {match.team_or_player}"
+                        f" {match.american_odds:+d} EV={match.expected_value:0.2%}"
+                    )
+                else:
+                    lines.append(
+                        f"{match.event_id} · {match.home_team} vs {match.away_team}"
+                        f" H={match.home_win_probability:0.1%} A={match.away_win_probability:0.1%}"
+                    )
+        return "\n".join(lines)
+
+    def _apply_search(
+        self,
+        odds: Sequence[IngestedOdds],
+        simulations: Sequence[SimulationResult],
+        opportunities: Sequence[Opportunity],
+    ) -> dict[str, Sequence[object]]:
+        if not self.search.query:
+            return {"quotes": [], "opportunities": [], "simulations": []}
+
+        def _match_quote(quote: IngestedOdds) -> bool:
+            haystack = " ".join(
+                [
+                    quote.event_id,
+                    quote.sportsbook,
+                    quote.book_market_group,
+                    quote.market,
+                    quote.scope,
+                    quote.team_or_player,
+                    quote.side or "",
+                ]
+            )
+            return self.search.match(haystack)
+
+        def _match_opportunity(opp: Opportunity) -> bool:
+            haystack = " ".join(
+                [
+                    opp.event_id,
+                    opp.sportsbook,
+                    opp.market,
+                    opp.scope,
+                    opp.team_or_player,
+                    opp.side or "",
+                ]
+            )
+            return self.search.match(haystack)
+
+        def _match_simulation(result: SimulationResult) -> bool:
+            haystack = " ".join([result.event_id, result.home_team, result.away_team])
+            return self.search.match(haystack)
+
+        matches: dict[str, Sequence[object]] = {"quotes": [], "opportunities": [], "simulations": []}
+        if "quotes" in self.search.targets:
+            matches["quotes"] = [quote for quote in odds if _match_quote(quote)]
+        if "opportunities" in self.search.targets:
+            matches["opportunities"] = [opp for opp in opportunities if _match_opportunity(opp)]
+        if "simulations" in self.search.targets:
+            matches["simulations"] = [sim for sim in simulations if _match_simulation(sim)]
+        return matches
+
 
 # ----------------------------------------------------------------------
 # Helper utilities
@@ -492,4 +625,144 @@ def _build_ladder_matrix(
         scope = _normalize_scope(quote.scope)
         ladder[key][scope][round(float(quote.line), 1)] = quote.american_odds
     return {k: dict(v) for k, v in ladder.items()}
+
+
+class TerminalDashboardSession:
+    """Small command interpreter for interactive terminal dashboards."""
+
+    def __init__(self, dashboard: Dashboard | None = None) -> None:
+        self.dashboard = dashboard or Dashboard()
+
+    @property
+    def panels(self) -> Sequence[str]:
+        return tuple(self.dashboard._panel_order)
+
+    def handle(
+        self,
+        command: str,
+        odds: Sequence[IngestedOdds],
+        simulations: Sequence[SimulationResult],
+        opportunities: Sequence[Opportunity],
+    ) -> str:
+        parts = shlex.split(command)
+        if not parts:
+            return self.dashboard.render(odds, simulations, opportunities)
+        action = parts[0].lower()
+        args = parts[1:]
+        if action in {"help", "?"}:
+            return self._help()
+        if action == "show":
+            return self.dashboard.render(odds, simulations, opportunities)
+        if action == "reset":
+            self.dashboard.reset_filters()
+            self.dashboard.reset_search()
+            return "Filters and search reset."
+        if action == "toggle":
+            return self._toggle(args)
+        if action == "filter":
+            return self._filter(args)
+        if action == "search":
+            return self._search(args)
+        if action == "clear" and args and args[0] == "search":
+            self.dashboard.reset_search()
+            return "Search cleared."
+        if action == "panels":
+            return "Available panels: " + ", ".join(self.dashboard._panels)
+        if action == "order":
+            return self._order(args)
+        if action == "panel":
+            return self._panel(args)
+        return f"Unknown command: {action}. Type 'help' for available commands."
+
+    # ------------------------------------------------------------------
+    # Command handlers
+    # ------------------------------------------------------------------
+    def _help(self) -> str:
+        return (
+            "Commands:\n"
+            "  show                            Render the dashboard\n"
+            "  filter key=value[...]            Apply filters (comma separated values)\n"
+            "  toggle quarters|halves|panel KEY Toggle quarters/halves or a panel\n"
+            "  search <query> [--case] [--in targets]   Apply text search\n"
+            "  clear search                   Remove search query\n"
+            "  order panel1,panel2,...        Reorder panels\n"
+            "  panels                          List available panels\n"
+            "  reset                           Reset filters and search"
+        )
+
+    def _toggle(self, args: Sequence[str]) -> str:
+        if not args:
+            return "Toggle requires an argument (quarters, halves, or panel <key>)."
+        target = args[0].lower()
+        if target == "quarters":
+            state = self.dashboard.toggle_quarters()
+            return f"Quarter markets {'enabled' if state else 'disabled'}."
+        if target == "halves":
+            state = self.dashboard.toggle_halves()
+            return f"Half markets {'enabled' if state else 'disabled'}."
+        if target == "panel" and len(args) > 1:
+            visible = self.dashboard.toggle_panel(args[1])
+            return f"Panel '{args[1]}' {'expanded' if visible else 'collapsed'}."
+        return "Unsupported toggle argument."
+
+    def _filter(self, args: Sequence[str]) -> str:
+        if not args:
+            return "Usage: filter sportsbooks=DK,FanDuel markets=moneyline"
+        updates: dict[str, object] = {}
+        for token in args:
+            if "=" not in token:
+                return f"Invalid filter token: {token}"
+            key, value = token.split("=", 1)
+            key = key.strip()
+            values = [item.strip() for item in value.split(",") if item.strip()]
+            updates[key] = None if not values else values
+        try:
+            self.dashboard.set_filters(**updates)
+        except TypeError as exc:
+            return f"Error applying filters: {exc}"
+        return "Filters updated."
+
+    def _search(self, args: Sequence[str]) -> str:
+        if not args:
+            return "Usage: search <query> [--case] [--in quotes,opportunities]"
+        query: list[str] = []
+        case_sensitive = None
+        targets: Iterable[str] | None = None
+        index = 0
+        while index < len(args):
+            token = args[index]
+            if token == "--case":
+                case_sensitive = True
+            elif token == "--nocase":
+                case_sensitive = False
+            elif token == "--in":
+                index += 1
+                if index >= len(args):
+                    return "Missing argument for --in"
+                targets = [part.strip() for part in args[index].split(",") if part.strip()]
+            else:
+                query.append(token)
+            index += 1
+        final_query = " ".join(query)
+        self.dashboard.set_search(final_query, case_sensitive=case_sensitive, targets=targets)
+        return f"Search set to {final_query!r}."
+
+    def _order(self, args: Sequence[str]) -> str:
+        if not args:
+            return "Usage: order controls,quotes,..."
+        order = [part.strip() for part in args[0].split(",") if part.strip()]
+        try:
+            self.dashboard.reorder_panels(order)
+        except KeyError as exc:
+            return str(exc)
+        return "Panel order updated."
+
+    def _panel(self, args: Sequence[str]) -> str:
+        if len(args) < 2 or args[0] != "info":
+            return "Usage: panel info <key>"
+        key = args[1]
+        panel = self.dashboard._panels.get(key)
+        if not panel:
+            return f"Unknown panel '{key}'."
+        return f"Panel '{panel.title}' is {'collapsed' if panel.collapsed else 'expanded'}."
 

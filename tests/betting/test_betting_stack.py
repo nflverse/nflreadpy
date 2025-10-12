@@ -5,11 +5,12 @@ import copy
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Mapping, Tuple
 
 import pytest
 
 from nflreadpy.betting.analytics import EdgeDetector
+from nflreadpy.betting.alerts import AlertSink
 from nflreadpy.betting.dashboard import Dashboard
 from nflreadpy.betting.ingestion import IngestedOdds, OddsIngestionService
 from nflreadpy.betting.models import (
@@ -35,6 +36,20 @@ from nflreadpy.betting.scrapers.pinnacle import PinnacleScraper
 FANDUEL_URL = "https://stub/fanduel"
 DRAFTKINGS_URL = "https://stub/draftkings"
 PINNACLE_URL = "https://stub/pinnacle"
+
+
+class RecordingAlertSink(AlertSink):
+    def __init__(self) -> None:
+        self.messages: List[Tuple[str, str, Mapping[str, Any] | None]] = []
+
+    def send(
+        self,
+        subject: str,
+        body: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.messages.append((subject, body, metadata))
 
 
 class StubHTTPClient:
@@ -131,6 +146,11 @@ def scraper_configs(stale_stub_client: StubHTTPClient) -> List[Dict[str, Any]]:
             "rate_limit_per_second": None,
         },
     ]
+
+
+@pytest.fixture()
+def alert_sink() -> RecordingAlertSink:
+    return RecordingAlertSink()
 
 
 @pytest.fixture()
@@ -246,6 +266,10 @@ def test_http_scrapers_normalise_and_best_price(
     coordinator = MultiScraperCoordinator(http_scrapers)
     quotes = asyncio.run(coordinator.collect_once())
     assert quotes
+    diagnostics = coordinator.last_run_details
+    assert set(diagnostics) == {"fanduel", "draftkings", "pinnacle"}
+    assert all("latency_seconds" in info for info in diagnostics.values())
+    assert all(info.get("error") is None for info in diagnostics.values())
     teams = {
         quote.team_or_player
         for quote in quotes
@@ -333,12 +357,14 @@ def test_edge_detector_identifies_varied_edges(
 def test_service_metrics_and_validation(
     tmp_db_path: Path,
     scraper_configs: List[Dict[str, Any]],
+    alert_sink: RecordingAlertSink,
 ) -> None:
     service = OddsIngestionService(
         scrapers=None,
         scraper_configs=scraper_configs,
         storage_path=tmp_db_path,
         stale_after=dt.timedelta(days=1800),
+        alert_sink=alert_sink,
     )
     stored = asyncio.run(service.fetch_and_store())
     metrics = service.metrics
@@ -346,9 +372,18 @@ def test_service_metrics_and_validation(
     assert metrics["persisted"] == len(stored) == 17
     assert metrics["discarded"].get("invalid_odds") == 1
     assert metrics["discarded"].get("stale") == 2
+    assert metrics["latency_seconds"] >= 0.0
+    per_scraper = metrics["per_scraper"]
+    assert set(per_scraper) == {"fanduel", "draftkings", "pinnacle"}
+    assert all("count" in info for info in per_scraper.values())
+    assert all("latency_seconds" in info for info in per_scraper.values())
+    assert all(info.get("error") is None for info in per_scraper.values())
     latest = service.load_latest("2024-NE-NYJ")
     assert any(row.sportsbook == "pinnacle" for row in latest)
     assert all(row.american_odds != 0 for row in latest)
+    assert alert_sink.messages
+    validation_subjects = {subject for subject, _, _ in alert_sink.messages}
+    assert "Odds validation issues" in validation_subjects
 
 
 def test_dashboard_renders_sections(

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 from collections import defaultdict
-from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Awaitable, Callable, Dict, Iterable, List, Sequence
 
 from . import (
     Dashboard,
@@ -23,13 +24,34 @@ from . import (
     QuantumPortfolioOptimizer,
     consolidate_best_prices,
 )
-from .alerts import AlertManager, get_alert_manager
+from .alerts import AlertManager, get_alert_manager, install_signal_handlers
 from .analytics import LineMovement
 from .dashboard import RiskSummary
 from .ingestion import IngestedOdds
 from .models import PlayerProjection, SimulationResult, TeamRating
 from .scheduler import Scheduler
 from .scrapers.base import OddsQuote
+
+
+@dataclasses.dataclass(slots=True)
+class CommandContext:
+    """Runtime objects shared across command handlers."""
+
+    service: OddsIngestionService
+    alert_manager: AlertManager | None
+
+
+CommandHandler = Callable[[CommandContext, argparse.Namespace], Awaitable[None]]
+
+
+@dataclasses.dataclass(slots=True)
+class CommandSpec:
+    """Container describing a CLI sub-command."""
+
+    name: str
+    help: str
+    configure: Callable[[argparse.ArgumentParser], None]
+    handler: CommandHandler
 
 
 def _build_engine(teams: Iterable[str], iterations: int) -> MonteCarloEngine:
@@ -267,10 +289,58 @@ def _print_line_movements(movements: Sequence[LineMovement]) -> None:
         )
 
 
-async def _cmd_ingest(args: argparse.Namespace, alert_manager: AlertManager | None) -> None:
-    service = OddsIngestionService([MockSportsbookScraper()], storage_path=args.storage)
+def _maybe_alert_ingestion_health(
+    service: OddsIngestionService, alert_manager: AlertManager | None
+) -> None:
+    if alert_manager:
+        alert_manager.notify_ingestion_health(service.metrics)
+
+
+def _create_service(storage_path: str) -> OddsIngestionService:
+    return OddsIngestionService([MockSportsbookScraper()], storage_path=storage_path)
+
+
+def _configure_ingest_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--interval", type=float, default=0.0)
+    parser.add_argument("--jitter", type=float, default=0.0)
+    parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument("--retry-backoff", type=float, default=2.0)
+
+
+def _configure_simulate_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--iterations", type=int, default=20_000)
+    parser.add_argument("--bankroll", type=float, default=1000.0)
+    parser.add_argument("--refresh", action="store_true", default=False)
+    parser.add_argument("--value-threshold", type=float, default=0.01)
+    parser.add_argument("--history-limit", type=int, default=128)
+    parser.add_argument("--movement-threshold", type=int, default=40)
+
+
+def _configure_scan_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--iterations", type=int, default=10_000)
+    parser.add_argument("--history-limit", type=int, default=256)
+    parser.add_argument("--value-threshold", type=float, default=0.02)
+    parser.add_argument("--movement-threshold", type=int, default=30)
+
+
+def _configure_dashboard_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--iterations", type=int, default=15_000)
+    parser.add_argument("--refresh", action="store_true", default=False)
+    parser.add_argument("--value-threshold", type=float, default=0.015)
+
+
+def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--limit", type=int, default=500)
+    parser.add_argument("--iterations", type=int, default=8_000)
+    parser.add_argument("--value-threshold", type=float, default=0.02)
+
+
+async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
     if args.interval <= 0:
         stored = await service.fetch_and_store()
+        _maybe_alert_ingestion_health(service, alert_manager)
         print(f"Ingested {len(stored)} quotes into {args.storage}")
         return
 
@@ -278,6 +348,7 @@ async def _cmd_ingest(args: argparse.Namespace, alert_manager: AlertManager | No
 
     async def _collect() -> None:
         await service.fetch_and_store()
+        _maybe_alert_ingestion_health(service, alert_manager)
 
     scheduler.add_job(
         _collect,
@@ -287,23 +358,25 @@ async def _cmd_ingest(args: argparse.Namespace, alert_manager: AlertManager | No
         retry_backoff=args.retry_backoff,
         name="odds-ingest",
     )
+    install_signal_handlers(scheduler.stop)
     print("Starting ingestion scheduler. Press Ctrl+C to stop.")
     try:
         await scheduler.run()
-    except KeyboardInterrupt:
-        scheduler.stop()
     finally:
         await scheduler.shutdown()
 
 
-async def _cmd_simulate(args: argparse.Namespace, alert_manager: AlertManager | None) -> None:
-    service = OddsIngestionService([MockSportsbookScraper()], storage_path=args.storage)
+async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
     if args.refresh:
         ingested = await service.fetch_and_store()
+        _maybe_alert_ingestion_health(service, alert_manager)
     else:
         ingested = service.load_latest()
         if not ingested:
             ingested = await service.fetch_and_store()
+            _maybe_alert_ingestion_health(service, alert_manager)
     quotes = _quotes_from_ingested(ingested)
     simulations = _run_simulations(quotes, args.iterations)
     correlation_limits = _parse_correlation_limits(args.correlation_limit)
@@ -332,11 +405,13 @@ async def _cmd_simulate(args: argparse.Namespace, alert_manager: AlertManager | 
     _print_line_movements(movements)
 
 
-async def _cmd_scan(args: argparse.Namespace, alert_manager: AlertManager | None) -> None:
-    service = OddsIngestionService([MockSportsbookScraper()], storage_path=args.storage)
+async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
     history = service.load_history(limit=args.history_limit)
     if not history:
         history = await service.fetch_and_store()
+        _maybe_alert_ingestion_health(service, alert_manager)
     quotes = _quotes_from_ingested(history)
     simulations = _run_simulations(quotes, args.iterations)
     opportunities = _detect_opportunities(
@@ -356,14 +431,17 @@ async def _cmd_scan(args: argparse.Namespace, alert_manager: AlertManager | None
     _print_line_movements(movements)
 
 
-async def _cmd_dashboard(args: argparse.Namespace, alert_manager: AlertManager | None) -> None:
-    service = OddsIngestionService([MockSportsbookScraper()], storage_path=args.storage)
+async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
     if args.refresh:
         latest = await service.fetch_and_store()
+        _maybe_alert_ingestion_health(service, alert_manager)
     else:
         latest = service.load_latest()
         if not latest:
             latest = await service.fetch_and_store()
+            _maybe_alert_ingestion_health(service, alert_manager)
     quotes = _quotes_from_ingested(latest)
     simulations = _run_simulations(quotes, args.iterations)
     correlation_limits = _parse_correlation_limits(args.correlation_limit)
@@ -396,8 +474,9 @@ async def _cmd_dashboard(args: argparse.Namespace, alert_manager: AlertManager |
     print(rendered)
 
 
-async def _cmd_backtest(args: argparse.Namespace, alert_manager: AlertManager | None) -> None:
-    service = OddsIngestionService([MockSportsbookScraper()], storage_path=args.storage)
+async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> None:
+    service = context.service
+    alert_manager = context.alert_manager
     history = service.load_history(limit=args.limit)
     if not history:
         print("No historical odds available for backtesting.")
@@ -440,80 +519,54 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    ingest_parser = subparsers.add_parser("ingest", parents=[parent], help="Collect odds")
-    ingest_parser.add_argument("--interval", type=float, default=0.0)
-    ingest_parser.add_argument("--jitter", type=float, default=0.0)
-    ingest_parser.add_argument("--retries", type=int, default=3)
-    ingest_parser.add_argument("--retry-backoff", type=float, default=2.0)
-    ingest_parser.set_defaults(handler=_cmd_ingest)
+    commands: list[CommandSpec] = [
+        CommandSpec(
+            name="ingest",
+            help="Collect odds",
+            configure=_configure_ingest_parser,
+            handler=_cmd_ingest,
+        ),
+        CommandSpec(
+            name="simulate",
+            help="Simulate markets and rank opportunities",
+            configure=_configure_simulate_parser,
+            handler=_cmd_simulate,
+        ),
+        CommandSpec(
+            name="scan",
+            help="Scan stored markets for edges and movement",
+            configure=_configure_scan_parser,
+            handler=_cmd_scan,
+        ),
+        CommandSpec(
+            name="dashboard",
+            help="Render the ASCII dashboard",
+            configure=_configure_dashboard_parser,
+            handler=_cmd_dashboard,
+        ),
+        CommandSpec(
+            name="backtest",
+            help="Replay historical odds and summarise expected value",
+            configure=_configure_backtest_parser,
+            handler=_cmd_backtest,
+        ),
+    ]
 
-    simulate_parser = subparsers.add_parser(
-        "simulate",
-        parents=[parent],
-        help="Simulate markets and rank opportunities",
-    )
-    simulate_parser.add_argument("--iterations", type=int, default=20_000)
-    simulate_parser.add_argument("--bankroll", type=float, default=1000.0)
-    simulate_parser.add_argument("--refresh", action="store_true", default=False)
-    simulate_parser.add_argument("--value-threshold", type=float, default=0.01)
-    simulate_parser.add_argument("--history-limit", type=int, default=128)
-    simulate_parser.add_argument("--movement-threshold", type=int, default=40)
-    simulate_parser.add_argument("--kelly-fraction", type=float, default=1.0)
-    simulate_parser.add_argument("--portfolio-fraction", type=float, default=1.0)
-    simulate_parser.add_argument(
-        "--correlation-limit", action="append", default=[], help="Limit correlated exposure"
-    )
-    simulate_parser.add_argument("--risk-trials", type=int, default=500)
-    simulate_parser.add_argument("--risk-seed", type=int)
-    simulate_parser.set_defaults(handler=_cmd_simulate)
-
-    scan_parser = subparsers.add_parser(
-        "scan",
-        parents=[parent],
-        help="Scan stored markets for edges and movement",
-    )
-    scan_parser.add_argument("--iterations", type=int, default=10_000)
-    scan_parser.add_argument("--history-limit", type=int, default=256)
-    scan_parser.add_argument("--value-threshold", type=float, default=0.02)
-    scan_parser.add_argument("--movement-threshold", type=int, default=30)
-    scan_parser.add_argument("--kelly-fraction", type=float, default=1.0)
-    scan_parser.set_defaults(handler=_cmd_scan)
-
-    dashboard_parser = subparsers.add_parser(
-        "dashboard",
-        parents=[parent],
-        help="Render the ASCII dashboard",
-    )
-    dashboard_parser.add_argument("--iterations", type=int, default=15_000)
-    dashboard_parser.add_argument("--refresh", action="store_true", default=False)
-    dashboard_parser.add_argument("--value-threshold", type=float, default=0.015)
-    dashboard_parser.add_argument("--bankroll", type=float, default=1000.0)
-    dashboard_parser.add_argument("--kelly-fraction", type=float, default=1.0)
-    dashboard_parser.add_argument("--portfolio-fraction", type=float, default=1.0)
-    dashboard_parser.add_argument(
-        "--correlation-limit", action="append", default=[], help="Limit correlated exposure"
-    )
-    dashboard_parser.add_argument("--risk-trials", type=int, default=250)
-    dashboard_parser.add_argument("--risk-seed", type=int)
-    dashboard_parser.set_defaults(handler=_cmd_dashboard)
-
-    backtest_parser = subparsers.add_parser(
-        "backtest",
-        parents=[parent],
-        help="Replay historical odds and summarise expected value",
-    )
-    backtest_parser.add_argument("--limit", type=int, default=500)
-    backtest_parser.add_argument("--iterations", type=int, default=8_000)
-    backtest_parser.add_argument("--value-threshold", type=float, default=0.02)
-    backtest_parser.set_defaults(handler=_cmd_backtest)
+    for command in commands:
+        parser_kwargs = dict(parents=[parent], help=command.help)
+        subparser = subparsers.add_parser(command.name, **parser_kwargs)
+        command.configure(subparser)
+        subparser.set_defaults(handler=command.handler)
 
     return parser
 
 
 async def _dispatch(args: argparse.Namespace) -> None:
     alert_manager = get_alert_manager(args.alerts_config)
-    handler = args.handler
-    await handler(args, alert_manager)
+    service = _create_service(args.storage)
+    context = CommandContext(service=service, alert_manager=alert_manager)
+    handler: CommandHandler = args.handler
+    await handler(context, args)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

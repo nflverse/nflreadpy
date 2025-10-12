@@ -10,9 +10,11 @@ import logging
 import math
 import os
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence
 
+from .alerts import AlertSink
 from .normalization import NameNormalizer, default_normalizer
 from .scrapers.base import MultiScraperCoordinator, OddsQuote, SportsbookScraper
 from .scrapers.draftkings import DraftKingsScraper
@@ -56,6 +58,7 @@ class OddsIngestionService:
         storage_path: str | os.PathLike[str] = "betting_odds.sqlite3",
         normalizer: NameNormalizer | None = None,
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
+        alert_sink: AlertSink | None = None,
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -64,10 +67,13 @@ class OddsIngestionService:
         self._normalizer = normalizer or default_normalizer()
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
         self._stale_after = stale_after
+        self._alert_sink = alert_sink
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
             "discarded": {},
+            "latency_seconds": 0.0,
+            "per_scraper": {},
         }
         self._last_validation_summary: Dict[str, int] = {}
         self._init_db()
@@ -75,6 +81,10 @@ class OddsIngestionService:
     @property
     def metrics(self) -> Mapping[str, Any]:
         return self._metrics
+
+    @property
+    def last_validation_summary(self) -> Mapping[str, int]:
+        return dict(self._last_validation_summary)
 
     def _instantiate_scrapers(
         self, scraper_configs: Sequence[Mapping[str, Any]] | None
@@ -153,9 +163,22 @@ class OddsIngestionService:
     async def fetch_and_store(self) -> List[IngestedOdds]:
         """Fetch odds from all scrapers and persist them."""
 
+        start = time.perf_counter()
         quotes = await self._coordinator.collect_once()
+        elapsed = time.perf_counter() - start
+        per_scraper = {
+            name: dict(details)
+            for name, details in self._coordinator.last_run_details.items()
+        }
+        self._maybe_alert_on_scraper_failures(per_scraper)
         if not quotes:
-            self._metrics = {"requested": 0, "persisted": 0, "discarded": {}}
+            self._metrics = {
+                "requested": 0,
+                "persisted": 0,
+                "discarded": {},
+                "latency_seconds": elapsed,
+                "per_scraper": per_scraper,
+            }
             return []
 
         valid_quotes = self._filter_valid_quotes(quotes)
@@ -166,7 +189,10 @@ class OddsIngestionService:
                 "requested": len(quotes),
                 "persisted": 0,
                 "discarded": {"validation_failed": len(quotes)},
+                "latency_seconds": elapsed,
+                "per_scraper": per_scraper,
             }
+            self._emit_validation_alert(len(quotes), self._last_validation_summary)
             return []
 
         payload = [
@@ -247,13 +273,21 @@ class OddsIngestionService:
                 payload,
             )
             conn.commit()
+        self._audit_logger.info(
+            "ingestion.persisted",
+            extra={"persisted": len(valid_quotes), "requested": len(quotes)},
+        )
 
         discarded_summary = self._last_validation_summary
         self._metrics = {
             "requested": len(quotes),
             "persisted": len(valid_quotes),
             "discarded": discarded_summary,
+            "latency_seconds": elapsed,
+            "per_scraper": per_scraper,
         }
+        if discarded_summary:
+            self._emit_validation_alert(len(quotes), discarded_summary)
         logger.info(
             "Stored %d odds quotes (%d discarded: %s)",
             len(valid_quotes),
@@ -288,9 +322,16 @@ class OddsIngestionService:
                 valid.append(quote)
             else:
                 summary[reason] = summary.get(reason, 0) + 1
+                logger.debug(
+                    "Discarding quote from %s/%s (%s): %s",
+                    quote.sportsbook,
+                    quote.market,
+                    quote.event_id,
+                    reason,
+                )
         self._last_validation_summary = dict(summary)
         if summary:
-            logger.debug("Discarded quotes summary: %s", summary)
+            logger.warning("Discarded quotes summary: %s", summary)
         return valid
 
     def _validate_quote(
@@ -300,16 +341,65 @@ class OddsIngestionService:
             return "invalid_odds"
         if not isinstance(quote.american_odds, int):
             return "invalid_odds"
+        if abs(quote.american_odds) > 100000:
+            return "invalid_odds"
+        if abs(quote.american_odds) < 100 and quote.american_odds not in {100, -100}:
+            return "invalid_odds"
         if quote.line is not None and not isinstance(quote.line, (int, float)):
             return "invalid_line"
         if isinstance(quote.line, float) and not math.isfinite(quote.line):
             return "invalid_line"
+        if not quote.team_or_player:
+            return "missing_selection"
         observed = quote.observed_at
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=dt.timezone.utc)
         if observed < reference_time - self._stale_after:
             return "stale"
         return None
+
+    def _maybe_alert_on_scraper_failures(
+        self, per_scraper: Mapping[str, Mapping[str, Any]]
+    ) -> None:
+        failures = {
+            name: details.get("error")
+            for name, details in per_scraper.items()
+            if details.get("error")
+        }
+        if not failures:
+            return
+        logger.error("Scraper failures detected: %s", failures)
+        self._send_alert(
+            "Odds scraper failures",
+            "One or more sportsbook scrapers failed during collection.",
+            metadata={"failures": failures},
+        )
+
+    def _emit_validation_alert(
+        self, requested: int, summary: Mapping[str, int]
+    ) -> None:
+        if not summary:
+            return
+        logger.warning("Validation rejected %d quotes: %s", requested, summary)
+        self._send_alert(
+            "Odds validation issues",
+            f"Validation rejected {sum(summary.values())} of {requested} quotes.",
+            metadata={"discarded": dict(summary)},
+        )
+
+    def _send_alert(
+        self,
+        subject: str,
+        body: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not self._alert_sink:
+            return
+        try:
+            self._alert_sink.send(subject, body, metadata=metadata)
+        except Exception:  # pragma: no cover - alert sinks shouldn't break ingestion
+            logger.exception("Failed to dispatch alert: %s", subject)
 
     def load_latest(self, event_id: str | None = None) -> List[IngestedOdds]:
         """Load the latest stored odds from disk."""

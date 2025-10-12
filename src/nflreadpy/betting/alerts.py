@@ -211,7 +211,7 @@ def load_alert_config(path: str | os.PathLike[str] | None = None) -> AlertConfig
     return AlertConfiguration()
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(slots=True)
 class AlertManager:
     """Dispatch alert notifications to configured sinks."""
 
@@ -274,6 +274,43 @@ class AlertManager:
         body = "\n".join(lines)
         metadata = {"count": len(notable)}
         self.send("Line movement detected", body, metadata=metadata)
+
+    def notify_ingestion_health(self, metrics: Mapping[str, Any]) -> None:
+        requested = int(metrics.get("requested", 0) or 0)
+        persisted = int(metrics.get("persisted", 0) or 0)
+        discarded_raw = metrics.get("discarded", {})
+        discarded_total = 0
+        discarded_breakdown: dict[str, int] = {}
+        if isinstance(discarded_raw, Mapping):
+            for key, value in discarded_raw.items():
+                try:
+                    count = int(value)
+                except Exception:
+                    continue
+                if count <= 0:
+                    continue
+                discarded_total += count
+                discarded_breakdown[str(key)] = count
+        if requested == 0 and persisted == 0 and discarded_total == 0:
+            return
+        if requested == 0:
+            subject = "Ingestion idle"
+            body = "No quotes were requested from sportsbooks."
+        elif persisted == 0:
+            subject = "Ingestion failure"
+            body = f"All {requested} requested quotes were discarded."
+        elif discarded_total:
+            subject = "Ingestion degradation"
+            body = f"{discarded_total} of {requested} quotes were discarded."
+        else:
+            return
+        metadata: dict[str, Any] = {
+            "requested": requested,
+            "persisted": persisted,
+        }
+        if discarded_breakdown:
+            metadata["discarded"] = discarded_breakdown
+        self.send(subject, body, metadata=metadata)
 
 
 _cached_manager: AlertManager | None | bool = False

@@ -30,6 +30,32 @@ export SPORTSBOOK_API_SECRET="..."
 Set `NFLREADPY_VERBOSE=true` when troubleshooting HTTP downloads, and provide a
 `NFLREADPY_USER_AGENT` that identifies your integration if sportsbooks require it.
 
+## Run with the published container images
+
+CI builds multi-arch container images for the betting stack and publishes them to GitHub
+Container Registry. Use the CPU-optimised image for general deployments and the CUDA variant when
+running GPU-accelerated simulations.
+
+```bash
+# CPU image
+docker run --rm \
+  -e NFLREADPY_BETTING_ENV=production \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/data:/app/data \
+  ghcr.io/nflverse/nflreadpy:latest-cpu ingest --interval 60 --jitter 5
+
+# GPU image
+docker run --rm --gpus all \
+  -e NFLREADPY_BETTING_ENV=production \
+  -v $(pwd)/config:/app/config \
+  -v $(pwd)/data:/app/data \
+  ghcr.io/nflverse/nflreadpy:latest-gpu simulate --iterations 40000 --refresh
+```
+
+Both images ship with the betting extras installed and use `nflreadpy-betting` as the default
+entrypoint, so invoking them with no additional arguments prints CLI help. Mount your configuration
+and state directories into `/app/config` and `/app/data` to persist overrides and SQLite storage.
+
 ## Prime reference data
 
 Run the primer script once after installation (or whenever nflverse publishes a new season) to

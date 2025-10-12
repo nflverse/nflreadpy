@@ -1,15 +1,16 @@
 # Configuration Reference
 
-nflreadpy centralises configuration through the `BettingConfig` dataclass and the global
-`update_config` helpers exposed in `nflreadpy.config`. This guide lists the most common knobs
-for end-to-end deployments.
+nflreadpy centralises configuration through the :mod:`nflreadpy.config` helpers and the
+layered betting settings parsed into the `BettingConfig` Pydantic model. This guide summarises
+the key switches and how to combine configuration sources across environments.
 
 ## Core library settings
 
-Use `nflreadpy.update_config` to control caching, timeouts, and logging:
+Use :func:`nflreadpy.config.update_config` to control caching, timeouts, and logging for the
+data loading APIs:
 
 ```python
-from nflreadpy import update_config
+from nflreadpy.config import update_config
 
 update_config(
     cache_mode="filesystem",
@@ -30,38 +31,47 @@ update_config(
 | `verbose` | Enables progress bars and debug logging for downloads. |
 | `user_agent` | Overrides the default HTTP user agent. |
 
-## Betting configuration file
+## Layered betting configuration
 
-The betting stack reads structured configuration from `config/betting.toml` by default. Load
-it with `load_betting_config()` and feed it to helper constructors.
+The betting stack reads YAML configuration via :func:`nflreadpy.betting.configuration.load_betting_config`.
+Start from `config/betting.yaml`, optionally merge in environment-specific files, and finish with
+environment-variable overrides.
 
 ```python
 from nflreadpy.betting.configuration import load_betting_config, create_ingestion_service
 
-config = load_betting_config("config/betting.toml")
-ingestion = create_ingestion_service(config)
+config = load_betting_config(
+    base_path="config/betting.yaml",
+    environment="production",  # or set NFLREADPY_BETTING_ENV
+    extra_paths=["/etc/nflreadpy/betting.d/overrides.yaml"],
+)
+service = create_ingestion_service(config)
 ```
 
-Key sections inside the TOML file include:
+The loader applies layers in the following order:
 
-- `[ingestion]` – Enables or disables specific scrapers, sets poll intervals, and configures
-  retry backoff.
-- `[analytics]` – Controls Monte Carlo iterations, Kelly fraction defaults, and bankroll guard
-  rails.
-- `[alerts]` – Declares alert routing (Slack, email, PagerDuty) and severity thresholds.
-- `[dashboards]` – Defines Streamlit/terminal layout preferences and update cadence.
+1. Load the base file (defaults to `config/betting.yaml`).
+2. If the resolved environment (argument, `NFLREADPY_BETTING_ENV`, or the file's own
+   ``environment`` field) is set, merge `config/betting.<env>.yaml` when present.
+3. Merge any additional override files supplied via ``extra_paths`` or the
+   `NFLREADPY_BETTING_CONFIG` environment variable (colon-separated list).
+4. Apply overrides from environment variables prefixed with `NFLREADPY_BETTING__` where double
+   underscores delimit nesting (for example ``NFLREADPY_BETTING__ingestion__storage_path=/data/odds.sqlite3``).
+5. Resolve `${TOKEN}` placeholders inside YAML values using the process environment.
 
-## Overriding at runtime
+Environment overrides accept native types. Set ``NFLREADPY_BETTING__analytics__value_threshold=0.03``
+to tighten the edge detector or ``NFLREADPY_BETTING__scrapers__0__runtime__poll_interval_seconds=30``
+to slow a single scraper without touching files.
 
-The CLI accepts overrides via flags or environment variables. Example:
+### Validating configuration
+
+Before deploying a new layer, validate the merged output with the CLI:
 
 ```bash
-uv run nflreadpy-betting run \
-  --config config/prod.toml \
-  --refresh-interval 30 \
-  --kelly-fraction 0.6 \
-  --enable-alerts
+uv run nflreadpy-betting validate-config \
+  --config config/betting.yaml \
+  --environment production
 ```
 
-Use overrides for incident response or rapid experimentation. Persist long-term changes in
-source-controlled configuration files to keep environments reproducible.
+The command prints merged settings, warnings, and validation errors. Incorporate it into CI/CD
+to guard against malformed overrides.

@@ -85,6 +85,17 @@ provides:
   ingestion → modeling → edge detection loop with portfolio recommendations and
   movement summaries.
 
+Official container images for the betting stack are published to
+`ghcr.io/nflverse/nflreadpy` with ``-cpu`` and ``-gpu`` tags. Each image ships with the betting
+extras installed and uses ``nflreadpy-betting`` as the entrypoint so you can run commands such as:
+
+```bash
+docker run --rm \
+  -e NFLREADPY_BETTING_ENV=production \
+  -v $(pwd)/config:/app/config \
+  ghcr.io/nflverse/nflreadpy:latest-cpu ingest --interval 60 --jitter 5
+```
+
 Comprehensive documentation for the betting toolkit lives on the docs site:
 
 - [Platform setup](https://nflreadpy.nflverse.com/guides/setup/)

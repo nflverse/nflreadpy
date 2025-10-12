@@ -32,7 +32,9 @@ workers, analytics scheduler, and dashboards.
   detected edges, or when the alert manager raises repeated exceptions.
 
 Route high-severity alerts (ingestion stalled, alert delivery failure) to paging channels and send
-other notifications to Slack or email.
+other notifications to Slack or email. Incorporate `uv run nflreadpy-betting validate-config`
+checks into your release pipeline so configuration regressions surface before production changes
+roll out.
 
 ## Runbooks
 
@@ -46,7 +48,7 @@ other notifications to Slack or email.
 
 ### Analytics backlog
 
-1. Review Monte Carlo iterations and bankroll simulation options in `config/betting.toml`.
+1. Review Monte Carlo iterations and bankroll simulation options in `config/betting.yaml`.
 2. Temporarily lower `analytics.iterations` or disable bankroll simulations via CLI overrides.
 3. Scale out analytics workers or provision more CPU.
 4. Verify that ingestion is not flooding analytics with duplicated events.

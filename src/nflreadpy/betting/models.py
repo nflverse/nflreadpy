@@ -91,12 +91,16 @@ if (
         def _factorial_term(value):
             return _jnp.exp(_jsp_special.gammaln(value + 1.0))
 
+        max_shared = min(max_home, max_away)
+        ks = _jnp.arange(max_shared + 1, dtype=_jnp.int32)
+
         def compute_entry(home_count: int, away_count: int):
             limit = _jnp.minimum(home_count, away_count)
-            ks = _jnp.arange(limit + 1, dtype=_jnp.int32)
-            home_exponent = _jnp.maximum(0, home_count - ks).astype(_jnp.float64)
-            away_exponent = _jnp.maximum(0, away_count - ks).astype(_jnp.float64)
-            shared_exponent = ks.astype(_jnp.float64)
+            valid_mask = ks <= limit
+            valid_mask_float = valid_mask.astype(_jnp.float64)
+            home_exponent = _jnp.where(valid_mask, home_count - ks, 0).astype(_jnp.float64)
+            away_exponent = _jnp.where(valid_mask, away_count - ks, 0).astype(_jnp.float64)
+            shared_exponent = _jnp.where(valid_mask, ks, 0).astype(_jnp.float64)
             home_term = _jnp.power(lam1, home_exponent)
             away_term = _jnp.power(lam2, away_exponent)
             shared_term = _jnp.power(lam3, shared_exponent)
@@ -105,7 +109,7 @@ if (
             denom_shared = _factorial_term(shared_exponent)
             term = base * home_term * away_term * shared_term
             term /= denom_home * denom_away * denom_shared
-            return _jnp.sum(term)
+            return _jnp.sum(term * valid_mask_float)
 
         home_range = _jnp.arange(max_home + 1)
         away_range = _jnp.arange(max_away + 1)

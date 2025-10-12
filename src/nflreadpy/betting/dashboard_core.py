@@ -71,7 +71,9 @@ class RiskSummary:
     positions: Sequence[PortfolioPosition] = dataclasses.field(default_factory=tuple)
     exposure_by_event: Mapping[Tuple[str, str], float] = dataclasses.field(default_factory=dict)
     correlation_exposure: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    correlation_limits: Mapping[str, float] = dataclasses.field(default_factory=dict)
     simulation: BankrollSimulationResult | None = None
+    bankroll_summary: Mapping[str, float] | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

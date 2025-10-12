@@ -391,23 +391,23 @@ class Dashboard:
             for group, stake in sorted(correlation.items()):
                 fraction = (stake / summary.bankroll) if summary.bankroll else 0.0
                 lines.append(f"  {group}: {stake:,.2f} ({fraction:.2%})")
-        if summary.simulation:
+        if summary.correlation_limits:
+            lines.append("Correlation limits:")
+            for group, fraction in sorted(summary.correlation_limits.items()):
+                lines.append(f"  {group}: {fraction:.2%} of bankroll")
+        metrics = summary.bankroll_summary
+        if metrics is None and summary.simulation:
             metrics = summary.simulation.summary()
+        if metrics:
             lines.append("Simulation drawdowns:")
             lines.append(f"  Trials: {int(metrics['trials'])}")
             lines.append(f"  Mean terminal: {metrics['mean_terminal']:.2f}")
             lines.append(f"  Median terminal: {metrics['median_terminal']:.2f}")
             lines.append(f"  Worst terminal: {metrics['worst_terminal']:.2f}")
-            lines.append(
-                f"  Average drawdown: {metrics['average_drawdown']:.2%}"
-            )
+            lines.append(f"  Average drawdown: {metrics['average_drawdown']:.2%}")
             lines.append(f"  Worst drawdown: {metrics['worst_drawdown']:.2%}")
-            lines.append(
-                f"  5th percentile drawdown: {metrics['p05_drawdown']:.2%}"
-            )
-            lines.append(
-                f"  95th percentile drawdown: {metrics['p95_drawdown']:.2%}"
-            )
+            lines.append(f"  5th percentile drawdown: {metrics['p05_drawdown']:.2%}")
+            lines.append(f"  95th percentile drawdown: {metrics['p95_drawdown']:.2%}")
         return "\n".join(lines)
 
     def _render_ladders(self, context: DashboardContext) -> str:

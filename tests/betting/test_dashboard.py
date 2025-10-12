@@ -88,12 +88,14 @@ def sample_risk_summary(sample_opportunities: list[Opportunity]) -> RiskSummary:
         positions=(position,),
         exposure_by_event={("KC@BUF", "moneyline"): 50.0},
         correlation_exposure={"KC": 50.0},
+        correlation_limits={"KC": 0.5},
         simulation=analytics_module.BankrollSimulationResult(
             [
                 analytics_module.BankrollTrajectory([1000.0, 1040.0, 1080.0]),
                 analytics_module.BankrollTrajectory([1000.0, 980.0, 960.0]),
             ]
         ),
+        bankroll_summary=None,
     )
 
 
@@ -201,6 +203,7 @@ def test_dashboard_snapshot(
     assert any("Opportunity Kelly fraction" in line for line in risk_panel.body)
     assert any("Simulation drawdowns" in line for line in risk_panel.body)
     assert any("Mean terminal" in line for line in risk_panel.body)
+    assert any("Correlation limits" in line for line in risk_panel.body)
     output = dashboard.render(
         sample_quotes,
         sample_simulation,

@@ -174,19 +174,14 @@ if TYPE_CHECKING:
             extra: Mapping[str, object] | None = None,
         ) -> None: ...
 
-    def american_to_decimal(value: int | float | str) -> float: ...
-
-    def american_to_fractional(
-        value: int, *, max_denominator: int = ...
-    ) -> tuple[int, int]: ...
-
-    def american_to_profit_multiplier(value: int | float | str) -> float: ...
-
-    def fractional_to_decimal(numerator: int, denominator: int) -> float: ...
-
-    def implied_probability_from_american(value: int | float | str) -> float: ...
-
-    def implied_probability_to_decimal(probability: float) -> float: ...
+    from .utils import (
+        american_to_decimal,
+        american_to_fractional,
+        american_to_profit_multiplier,
+        fractional_to_decimal,
+        implied_probability_from_american,
+        implied_probability_to_decimal,
+    )
 
     def best_prices_by_selection(
         quotes: Sequence[OddsQuote],
@@ -212,13 +207,15 @@ else:  # pragma: no cover - imported for runtime behaviour
     EntityLiteral = _scrapers.EntityLiteral
     OddsQuote = _scrapers.OddsQuote
     ScopeLiteral = _scrapers.ScopeLiteral
-    american_to_decimal = _scrapers.american_to_decimal
-    american_to_fractional = _scrapers.american_to_fractional
-    american_to_profit_multiplier = _scrapers.american_to_profit_multiplier
     best_prices_by_selection = _scrapers.best_prices_by_selection
-    fractional_to_decimal = _scrapers.fractional_to_decimal
-    implied_probability_from_american = _scrapers.implied_probability_from_american
-    implied_probability_to_decimal = _scrapers.implied_probability_to_decimal
+
+    _utils = importlib.import_module(".utils", __package__)
+    american_to_decimal = _utils.american_to_decimal
+    american_to_fractional = _utils.american_to_fractional
+    american_to_profit_multiplier = _utils.american_to_profit_multiplier
+    fractional_to_decimal = _utils.fractional_to_decimal
+    implied_probability_from_american = _utils.implied_probability_from_american
+    implied_probability_to_decimal = _utils.implied_probability_to_decimal
 
 if TYPE_CHECKING:
     from .ingestion import IngestedOdds as IngestedOddsType
@@ -270,8 +267,123 @@ class Opportunity:
         return american_to_profit_multiplier(self.american_odds)
 
 
+@dataclasses.dataclass(slots=True)
 class KellyCriterion:
     """Utility for computing fractional Kelly bet sizes."""
+
+    fractional_kelly: float = 1.0
+    cap: float | None = None
+
+    def __post_init__(self) -> None:
+        self.fractional_kelly = max(0.0, float(self.fractional_kelly))
+        if self.cap is not None:
+            self.cap = max(0.0, float(self.cap))
+        self._last_fraction: float | None = None
+
+    @property
+    def last_fraction(self) -> float | None:
+        """Return the most recent fraction calculated via this instance."""
+
+        return self._last_fraction
+
+    def _resolve_parameters(
+        self, fractional_kelly: float | None, cap: float | None
+    ) -> tuple[float, float | None]:
+        fraction = self.fractional_kelly if fractional_kelly is None else max(0.0, fractional_kelly)
+        resolved_cap = self.cap if cap is None else max(0.0, cap)
+        return fraction, resolved_cap
+
+    def __call__(
+        self,
+        win_probability: float,
+        loss_probability: float,
+        price: int | float | str,
+        *,
+        fractional_kelly: float | None = None,
+        cap: float | None = None,
+    ) -> float:
+        fraction, resolved_cap = self._resolve_parameters(fractional_kelly, cap)
+        value = KellyCriterion.fraction(
+            win_probability,
+            loss_probability,
+            price,
+            fractional_kelly=fraction,
+            cap=resolved_cap,
+        )
+        self._last_fraction = value
+        return value
+
+    def from_decimal(
+        self,
+        win_probability: float,
+        loss_probability: float,
+        decimal_odds: float,
+        *,
+        fractional_kelly: float | None = None,
+        cap: float | None = None,
+    ) -> float:
+        fraction, resolved_cap = self._resolve_parameters(fractional_kelly, cap)
+        value = KellyCriterion.fraction_from_decimal(
+            win_probability,
+            loss_probability,
+            decimal_odds,
+            fractional_kelly=fraction,
+            cap=resolved_cap,
+        )
+        self._last_fraction = value
+        return value
+
+    def from_fractional(
+        self,
+        win_probability: float,
+        loss_probability: float,
+        numerator: int,
+        denominator: int,
+        *,
+        fractional_kelly: float | None = None,
+        cap: float | None = None,
+    ) -> float:
+        fraction, resolved_cap = self._resolve_parameters(fractional_kelly, cap)
+        value = KellyCriterion.fraction_from_fractional(
+            win_probability,
+            loss_probability,
+            numerator,
+            denominator,
+            fractional_kelly=fraction,
+            cap=resolved_cap,
+        )
+        self._last_fraction = value
+        return value
+
+    def from_implied_probability(
+        self,
+        win_probability: float,
+        loss_probability: float,
+        implied_probability: float,
+        *,
+        fractional_kelly: float | None = None,
+        cap: float | None = None,
+    ) -> float:
+        fraction, resolved_cap = self._resolve_parameters(fractional_kelly, cap)
+        value = KellyCriterion.fraction_from_implied_probability(
+            win_probability,
+            loss_probability,
+            implied_probability,
+            fractional_kelly=fraction,
+            cap=resolved_cap,
+        )
+        self._last_fraction = value
+        return value
+
+    def with_fractional_kelly(self, fractional_kelly: float) -> "KellyCriterion":
+        """Return a new instance with an updated fractional Kelly factor."""
+
+        return dataclasses.replace(self, fractional_kelly=fractional_kelly)
+
+    def with_cap(self, cap: float | None) -> "KellyCriterion":
+        """Return a new instance with an updated Kelly cap."""
+
+        return dataclasses.replace(self, cap=cap)
 
     @staticmethod
     def fraction(
@@ -917,6 +1029,39 @@ class PortfolioManager:
         self.fractional_kelly = max(0.0, fractional_kelly)
         self._correlation_limits = dict(correlation_limits or {})
         self._correlation_key = correlation_key or self._default_correlation_key
+        self._last_simulation: BankrollSimulationResult | None = None
+
+    @property
+    def correlation_limits(self) -> Dict[str, float]:
+        """Return a shallow copy of configured correlation caps."""
+
+        return dict(self._correlation_limits)
+
+    @property
+    def last_simulation(self) -> BankrollSimulationResult | None:
+        """Return the most recent bankroll simulation result."""
+
+        return self._last_simulation
+
+    def bankroll_summary(self) -> Mapping[str, float] | None:
+        """Return the summary metrics for the last bankroll simulation."""
+
+        if not self._last_simulation:
+            return None
+        return self._last_simulation.summary()
+
+    def set_fractional_kelly(self, fractional_kelly: float) -> None:
+        """Update the fractional Kelly multiplier applied to allocations."""
+
+        self.fractional_kelly = max(0.0, fractional_kelly)
+
+    def set_correlation_limit(self, group: str, limit: float | None) -> None:
+        """Configure the correlation exposure cap for ``group``."""
+
+        if limit is None:
+            self._correlation_limits.pop(group, None)
+            return
+        self._correlation_limits[group] = max(0.0, limit)
 
     def allocate(self, opportunity: Opportunity) -> PortfolioPosition | None:
         now = dt.datetime.now(dt.timezone.utc)
@@ -1045,6 +1190,7 @@ class PortfolioManager:
         self._session_start_bankroll = self.bankroll
         self._total_session_stake = 0.0
         self._cooldown_until = None
+        self._last_simulation = None
 
     def simulate_bankroll(
         self,
@@ -1076,7 +1222,9 @@ class PortfolioManager:
                     bankroll -= position.stake
                 balances.append(bankroll)
             trajectories.append(BankrollTrajectory(balances))
-        return BankrollSimulationResult(trajectories)
+        result = BankrollSimulationResult(trajectories)
+        self._last_simulation = result
+        return result
 
     def _start_cooldown(self, reference: dt.datetime) -> None:
         if self._controls.cooldown_seconds:

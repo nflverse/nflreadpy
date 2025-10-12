@@ -92,6 +92,10 @@ class BettingConfig(BaseModel):
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
 
 
+class ConfigurationError(ValueError):
+    """Raised when betting configuration validation fails."""
+
+
 _ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
@@ -213,6 +217,92 @@ def load_betting_config(
     return BettingConfig.model_validate(merged)
 
 
+def validate_betting_config(config: BettingConfig) -> list[str]:
+    """Validate a :class:`BettingConfig` instance.
+
+    Args:
+        config: Parsed configuration object to validate.
+
+    Returns:
+        A list of warning messages. The function raises
+        :class:`ConfigurationError` if any fatal issues are detected.
+    """
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if not config.scrapers:
+        errors.append("at least one scraper must be defined")
+    else:
+        enabled = [scraper for scraper in config.scrapers if scraper.enabled]
+        if not enabled:
+            errors.append("all scrapers are disabled; enable at least one")
+        for index, scraper in enumerate(config.scrapers):
+            if not scraper.type.strip():
+                errors.append(f"scraper #{index + 1} is missing a type")
+            runtime = scraper.runtime
+            for field_name in (
+                "poll_interval_seconds",
+                "retry_attempts",
+                "retry_backoff",
+                "timeout_seconds",
+            ):
+                value = getattr(runtime, field_name)
+                if value is not None and value < 0:
+                    errors.append(
+                        f"scraper '{scraper.type}' runtime field '{field_name}' must be non-negative"
+                    )
+
+    ingestion = config.ingestion
+    if not str(ingestion.storage_path).strip():
+        errors.append("ingestion.storage_path cannot be empty")
+    if ingestion.stale_after_seconds <= 0:
+        errors.append("ingestion.stale_after_seconds must be greater than zero")
+    scheduler = ingestion.scheduler
+    if scheduler.interval_seconds < 0:
+        errors.append("ingestion.scheduler.interval_seconds must be non-negative")
+    if scheduler.jitter_seconds < 0:
+        errors.append("ingestion.scheduler.jitter_seconds must be non-negative")
+    if scheduler.retries < 0:
+        errors.append("ingestion.scheduler.retries must be non-negative")
+    if scheduler.retry_backoff < 0:
+        errors.append("ingestion.scheduler.retry_backoff must be non-negative")
+    if scheduler.interval_seconds and scheduler.interval_seconds < 10:
+        warnings.append(
+            "ingestion scheduler interval is below 10 seconds; be mindful of provider rate limits"
+        )
+
+    analytics = config.analytics
+    if analytics.bankroll <= 0:
+        errors.append("analytics.bankroll must be greater than zero")
+    if not 0 < analytics.kelly_fraction <= 1:
+        errors.append("analytics.kelly_fraction must be within (0, 1]")
+    if not 0 < analytics.portfolio_fraction <= 1:
+        errors.append("analytics.portfolio_fraction must be within (0, 1]")
+    if analytics.value_threshold <= 0:
+        errors.append("analytics.value_threshold must be greater than zero")
+    elif analytics.value_threshold < 0.01:
+        warnings.append(
+            "analytics value_threshold is very low; expect a large number of candidate opportunities"
+        )
+    if analytics.risk_trials < 0:
+        errors.append("analytics.risk_trials must be non-negative")
+    if analytics.history_limit <= 0:
+        errors.append("analytics.history_limit must be greater than zero")
+    if analytics.movement_threshold < 0:
+        errors.append("analytics.movement_threshold must be non-negative")
+
+    for name, value in analytics.iterations.model_dump().items():
+        if value <= 0:
+            errors.append(f"analytics.iterations.{name} must be greater than zero")
+
+    if errors:
+        bullet_list = "\n".join(f"- {message}" for message in errors)
+        raise ConfigurationError(f"Configuration validation failed:\n{bullet_list}")
+
+    return warnings
+
+
 def create_scrapers_from_config(config: BettingConfig) -> list["SportsbookScraper"]:
     """Instantiate sportsbook scrapers defined in the configuration."""
 
@@ -284,11 +374,13 @@ def create_edge_detector(
 __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
+    "ConfigurationError",
     "IngestionConfig",
     "IterationConfig",
     "SchedulerConfig",
     "ScraperConfig",
     "ScraperRuntimeConfig",
+    "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",
     "create_scrapers_from_config",

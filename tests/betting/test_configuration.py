@@ -6,10 +6,12 @@ import pytest
 
 from nflreadpy.betting.configuration import (
     BettingConfig,
+    ConfigurationError,
     create_edge_detector,
     create_ingestion_service,
     create_scrapers_from_config,
     load_betting_config,
+    validate_betting_config,
 )
 
 
@@ -96,4 +98,26 @@ analytics:
     config = load_betting_config(base_path=base)
     expected = Path(os.environ["STORAGE_ROOT"]) / "odds.sqlite3"
     assert Path(config.ingestion.storage_path) == expected
+
+
+def test_validate_default_configuration() -> None:
+    config = load_betting_config()
+    warnings = validate_betting_config(config)
+    assert isinstance(warnings, list)
+
+
+def test_validate_configuration_detects_disabled_scrapers() -> None:
+    config = load_betting_config()
+    disabled = [scraper.model_copy(update={"enabled": False}) for scraper in config.scrapers]
+    broken = config.model_copy(update={"scrapers": disabled})
+    with pytest.raises(ConfigurationError):
+        validate_betting_config(broken)
+
+
+def test_validate_configuration_emits_warnings() -> None:
+    config = load_betting_config()
+    tweaked_analytics = config.analytics.model_copy(update={"value_threshold": 0.001})
+    tweaked = config.model_copy(update={"analytics": tweaked_analytics})
+    warnings = validate_betting_config(tweaked)
+    assert warnings, "expected warnings for very low value threshold"
 

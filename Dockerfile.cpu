@@ -1,19 +1,49 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
+
+ARG PYTHON_VERSION=3.11-slim
+FROM python:${PYTHON_VERSION} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y build-essential curl \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install --no-install-recommends -y \
+        build-essential \
+        curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv "$VIRTUAL_ENV"
+
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --upgrade pip uv
 
 WORKDIR /app
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
 
-COPY pyproject.toml uv.lock ./
-RUN pip install --upgrade pip \
-    && pip install --no-cache-dir uv
+RUN uv pip install --no-cache-dir .[betting]
 
-COPY . .
-RUN uv pip install --system --no-cache .[betting]
+FROM python:${PYTHON_VERSION} AS runtime
 
-CMD ["nflreadpy-betting", "--help"]
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY config ./config
+
+LABEL org.opencontainers.image.source="https://github.com/nflverse/nflreadpy" \
+      org.opencontainers.image.title="nflreadpy betting (CPU)" \
+      org.opencontainers.image.description="CPU-optimised image for the nflreadpy betting toolkit"
+
+ENTRYPOINT ["nflreadpy-betting"]
+CMD ["--help"]

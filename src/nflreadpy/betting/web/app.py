@@ -96,13 +96,23 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
 
     sidebar = st.sidebar
     sidebar.header("Session")
-    refresh_seconds = sidebar.slider("Auto-refresh seconds", min_value=5, max_value=60, value=15, step=5)
+
+    refresh_seconds = 15
+    slider = getattr(sidebar, "slider", None)
+    if callable(slider):
+        refresh_seconds = slider(
+            "Auto-refresh seconds", min_value=5, max_value=60, value=refresh_seconds, step=5
+        )
+
     refresher = getattr(st, "autorefresh", None)
+    sidebar_caption = getattr(sidebar, "caption", getattr(st, "caption", lambda *_args, **_kwargs: None))
     if callable(refresher):  # pragma: no branch - depends on streamlit version
         refresher(interval=int(refresh_seconds * 1000), key="nfl-dashboard-refresh")
     else:  # pragma: no cover - informative message only when feature absent
-        sidebar.caption("Install Streamlit 1.27+ for automatic refresh support.")
-    if sidebar.button("Refresh now"):
+        sidebar_caption("Install Streamlit 1.27+ for automatic refresh support.")
+
+    button = getattr(sidebar, "button", None)
+    if callable(button) and button("Refresh now"):
         rerun = getattr(st, "experimental_rerun", None)
         if callable(rerun):  # pragma: no branch - streamlit shim
             rerun()

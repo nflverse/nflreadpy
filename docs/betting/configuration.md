@@ -1,116 +1,82 @@
-# Betting Toolkit Configuration
+# Layered betting configuration
 
-Configuration is centralised through `nflreadpy.get_config()` and the betting
-module's own settings registry. Use the following layers to control runtime
-behaviour and deployment-specific secrets.
+The betting toolkit reads configuration from a stack of YAML documents and
+environment variables. This layered approach lets you version baseline defaults
+in the repository while injecting environment-specific overrides and secrets at
+deploy time.
 
-## Global nflreadpy config
+## Configuration sources
 
-The base library exposes a mutable configuration object that affects caching,
-HTTP behaviour, and logging. Review the [API reference](../api/configuration.md)
-and focus on the options most relevant to betting workloads:
+Configuration is loaded in the following order:
 
-| Setting | Description | Typical value |
-| --- | --- | --- |
-| `cache_mode` | Enables in-memory, filesystem, or disabled caching. | `filesystem` for shared deployments |
-| `cache_path` | Filesystem location for cached market pulls and simulations. | `.cache/nflreadpy` |
-| `cache_duration` | Seconds before cached responses expire. | `180`–`600` |
-| `request_timeout` | Timeout passed to `requests` when hitting sportsbook APIs. | `10` |
-| `user_agent` | Identifies the client when calling third-party APIs. | Custom string per organisation |
+1. **Base file** – `config/betting.yaml` ships with sane defaults for scrapers,
+   ingestion, and analytics. Pass a different file with the `--config` flag or
+   `base_path` argument when calling `load_betting_config`.
+2. **Environment overlay** – Set `NFLREADPY_BETTING_ENV=production` (or any
+   other name) to merge `config/betting.<env>.yaml` on top of the base file.
+3. **Additional documents** – Provide extra override files via the
+   `NFLREADPY_BETTING_CONFIG` environment variable or the
+   `extra_paths` parameter. Multiple paths are accepted using the OS path
+   separator.
+4. **Environment variables** – Any environment variable beginning with
+   `NFLREADPY_BETTING__` updates nested values. Tokens are split on double
+   underscores and parsed as JSON when possible. For example:
 
-Update config values at runtime:
+   ```bash
+   export NFLREADPY_BETTING__INGESTION__STORAGE_PATH="/data/odds.sqlite3"
+   export NFLREADPY_BETTING__ANALYTICS__KELLY_FRACTION=0.4
+   export NFLREADPY_BETTING__SCRAPERS__0__RUNTIME__POLL_INTERVAL_SECONDS=30
+   ```
+
+5. **Environment tokens** – Strings in the YAML files can reference other
+   environment variables using `${VAR_NAME}`. Secrets stay outside source
+   control while still flowing into the runtime configuration.
+
+The merged payload is validated against `BettingConfig` and used to build
+sportsbook scrapers, the ingestion service, and analytics components. All
+initialisation helpers (`create_scrapers_from_config`,
+`create_ingestion_service`, `create_edge_detector`) read from the same object,
+ensuring consistent defaults across the CLI, background workers, and tests.
+
+## Validating configuration
+
+Use the CLI to verify that a configuration stack is internally consistent
+before deploying:
+
+```bash
+uv run nflreadpy-betting validate-config --config config/betting.yaml \
+  --environment production
+```
+
+The validator checks for missing or disabled scrapers, negative polling
+intervals, out-of-range bankroll and Kelly fractions, and ensures Monte Carlo
+iteration counts are positive. Warnings are emitted for suspicious thresholds;
+pass `--warnings-as-errors` to fail when warnings are encountered.
+
+Programmatic validation is also available:
 
 ```python
-import nflreadpy as nfl
+from nflreadpy.betting.configuration import load_betting_config, validate_betting_config
 
-nfl.update_config(cache_mode="filesystem", cache_path=".cache/nflreadpy", cache_duration=300)
+config = load_betting_config(environment="production")
+warnings = validate_betting_config(config)
+if warnings:
+    for message in warnings:
+        print(f"⚠️ {message}")
 ```
 
-Persist organisation defaults by wrapping the call inside your bootstrap code or
-using an environment-aware module that executes during worker start-up.
+## Managing secrets
 
-## Betting settings file
+Secrets are best supplied through environment variables and substituted into the
+YAML files via `${VAR}` placeholders. Combine this with
+`NFLREADPY_BETTING_CONFIG` overlays to keep production-only keys outside the
+repository. The GitHub Actions workflow, Kubernetes secrets, or any process
+manager that supports environment injection can populate these values at
+runtime.
 
-The betting module reads extended configuration from a declarative YAML or JSON
-file. Point the `NFLREADPY_BETTING_CONFIG` environment variable at the document
-when launching services:
+## Related documentation
 
-```bash
-export NFLREADPY_BETTING_CONFIG=config/betting.yaml
-```
-
-A minimal `betting.yaml` looks like:
-
-```yaml
-ingestion:
-  sportsbooks:
-    - name: pinnacle
-      markets: [moneyline, spread, total]
-      regions: [us]
-      polling_interval: 30
-    - name: draftkings
-      markets: [moneyline, spread, player_prop]
-      regions: [us]
-      polling_interval: 20
-  storage:
-    url: postgresql://nflreadpy:secret@localhost:5432/nflreadpy
-    schema: betting
-analytics:
-  models:
-    - module: nflreadpy.betting.models.elo
-      kwargs:
-        k_factor: 22
-    - module: nflreadpy.betting.models.simulator
-      kwargs:
-        iterations: 10000
-  portfolio:
-    bankroll: 10000
-    max_fraction: 0.03
-notifications:
-  slack:
-    webhook_url: https://hooks.slack.com/services/.../...
-  email:
-    sender: bettingbot@example.com
-    recipients:
-      - ops@example.com
-```
-
-### Overrides
-
-Override any key using environment variables prefixed with `NFLREADPY_BETTING__`
-and upper-cased path segments. For example, to change the bankroll in
-containerised deployments:
-
-```bash
-export NFLREADPY_BETTING__ANALYTICS__PORTFOLIO__BANKROLL=25000
-```
-
-Dotted keys map to nested dictionaries, and lists accept JSON payloads:
-
-```bash
-export NFLREADPY_BETTING__INGESTION__SPORTSBOOKS='[{"name":"pinnacle","markets":["moneyline"]}]'
-```
-
-## Secrets management
-
-Avoid storing API keys or database credentials inside source control. Recommended
-patterns include:
-
-- Injecting secrets through your orchestrator (systemd, Kubernetes, Airflow).
-- Using a secrets manager such as AWS Secrets Manager or HashiCorp Vault and
-  populating environment variables at runtime.
-- Encrypting configuration files with `sops` and decrypting during deployment.
-
-The ingestion and analytics services respect the `NFLREADPY_BETTING_SECRET_*`
-namespace for ad-hoc secrets you wish to expose programmatically.
-
-## Configuration validation
-
-Run the built-in validator before deploying configuration changes:
-
-```bash
-uv run nflreadpy-betting validate-config --path config/betting.yaml
-```
-
-The command checks schema compatibility, verifies connection strings, and warns
-when polling intervals or bankroll parameters exceed recommended thresholds.
+* [Deployment guide](deployment.md) – Covers environment bootstrapping, secrets
+  management, and container workflows in more detail.
+* [CLI reference](cli.md) – Documents the `nflreadpy-betting` commands that use
+  the layered configuration system.

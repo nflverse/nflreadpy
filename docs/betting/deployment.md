@@ -22,10 +22,12 @@ workflows.
    create an environment-specific overlay such as
    `config/betting.production.yaml`.
 
-3. **Verify the stack** – The CI test suite exercises the layered configuration
-   loader. You can run the same checks locally with:
+3. **Verify the stack** – Validate the active configuration and run the
+   regression tests before rolling out changes:
 
    ```bash
+   uv run nflreadpy-betting validate-config --config config/betting.yaml \
+     --environment production --warnings-as-errors
    uv run pytest tests/betting/test_configuration.py
    ```
 

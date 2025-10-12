@@ -2,7 +2,11 @@ import asyncio
 import datetime as dt
 
 from nflreadpy.betting.ingestion import IngestedOdds, OddsIngestionService
-from nflreadpy.betting.scrapers.base import OddsQuote, best_prices_by_selection
+from nflreadpy.betting.scrapers.base import (
+    OddsQuote,
+    SportsbookScraper,
+    best_prices_by_selection,
+)
 
 
 def _collect_quotes(scrapers):
@@ -72,6 +76,8 @@ def test_ingestion_rejects_stale_quotes(tmp_path, scraper_configs, alert_sink):
     discarded = metrics["discarded"]
     assert sum(discarded.values()) == metrics["requested"]
     assert discarded.get("stale", 0) >= 1
+    assert metrics["errors"]["validation"] == metrics["requested"]
+    assert metrics["errors"]["scrapers"] == 0
     assert set(metrics["per_scraper"]) == {"fanduel", "draftkings", "pinnacle"}
     assert any(subject == "Odds validation issues" for subject, *_ in alert_sink.messages)
 
@@ -86,6 +92,10 @@ def test_ingestion_best_price_aggregation(tmp_path, http_scrapers):
     ingested = asyncio.run(service.fetch_and_store())
     assert ingested
     assert service.metrics["persisted"] == len(ingested)
+    assert service.metrics["errors"]["scrapers"] == 0
+    assert service.metrics["errors"]["validation"] == sum(
+        service.metrics["discarded"].values()
+    )
 
     quotes = [_ingested_to_quote(record) for record in ingested]
     best = best_prices_by_selection(quotes)
@@ -97,3 +107,30 @@ def test_ingestion_best_price_aggregation(tmp_path, http_scrapers):
     assert best[ne_key].american_odds == -125
     assert best[nyj_key].sportsbook == "pinnacle"
     assert best[nyj_key].american_odds == 130
+
+
+class BoomScraper(SportsbookScraper):
+    name = "boom"
+
+    def __init__(self) -> None:
+        self.retry_attempts = 0
+
+    async def _fetch_lines_impl(self) -> list[OddsQuote]:  # pragma: no cover - trivial
+        raise RuntimeError("boom")
+
+
+def test_scraper_failure_metrics_and_alerts(tmp_path, alert_sink) -> None:
+    service = OddsIngestionService(
+        scrapers=[BoomScraper()],
+        storage_path=tmp_path / "boom.sqlite3",
+        stale_after=dt.timedelta(minutes=5),
+        alert_sink=alert_sink,
+    )
+
+    results = asyncio.run(service.fetch_and_store())
+    assert results == []
+    metrics = service.metrics
+    assert metrics["errors"]["scrapers"] == 1
+    assert metrics["errors"]["validation"] == 0
+    assert metrics["per_scraper"]["boom"]["error"]
+    assert any(subject == "Odds scraper failures" for subject, *_ in alert_sink.messages)

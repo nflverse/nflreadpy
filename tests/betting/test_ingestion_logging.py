@@ -43,6 +43,10 @@ def test_ingestion_logs_and_captures_invalid_quotes(
     results = asyncio.run(service.fetch_and_store())
     assert results == []
 
+    metrics = service.metrics
+    assert metrics["errors"]["validation"] == 1
+    assert metrics["errors"]["scrapers"] == 0
+
     discarded_logs = [
         rec for rec in caplog.records if rec.getMessage() == "ingestion.discarded"
     ]
@@ -51,7 +55,7 @@ def test_ingestion_logs_and_captures_invalid_quotes(
         rec for rec in caplog.records if rec.getMessage() == "ingestion.validation_failed"
     ]
     assert summary_logs
-    assert service.metrics["persisted"] == 0
+    assert metrics["persisted"] == 0
     assert service.last_validation_summary.get("invalid_odds") == 1
 
 
@@ -149,6 +153,7 @@ def test_ingestion_enforces_compliance(
     caplog.set_level(logging.WARNING, logger="test.ingestion.compliance")
     results = asyncio.run(service.fetch_and_store())
     assert results == []
+    assert service.metrics["errors"]["validation"] >= 1
     assert any(
         rec.getMessage() == "compliance.violation" for rec in caplog.records
     )
@@ -188,3 +193,4 @@ def test_future_timestamp_rejected(tmp_path: Path) -> None:
     assert results == []
     assert service.last_validation_summary.get("future_timestamp") == 1
     assert service.metrics["discarded"].get("future_timestamp") == 1
+    assert service.metrics["errors"]["validation"] == 1

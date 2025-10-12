@@ -159,6 +159,30 @@ def implied_probability_from_american(value: OddsValue) -> float:
     return implied_probability_from_decimal(decimal)
 
 
+def implied_probability_to_decimal(probability: float) -> float:
+    """Convert an implied probability into decimal odds."""
+
+    if probability <= 0.0 or probability >= 1.0:
+        raise ValueError("Probability must be between 0 and 1 (exclusive)")
+    return 1.0 / probability
+
+
+def implied_probability_to_american(probability: float) -> int:
+    """Convert an implied probability into American odds."""
+
+    decimal = implied_probability_to_decimal(probability)
+    return decimal_to_american(decimal)
+
+
+def implied_probability_to_fraction(
+    probability: float, *, max_denominator: int = 512
+) -> Tuple[int, int]:
+    """Convert an implied probability into fractional odds."""
+
+    decimal = implied_probability_to_decimal(probability)
+    return decimal_to_fractional(decimal, max_denominator=max_denominator)
+
+
 @dataclasses.dataclass(slots=True)
 class OddsQuote:
     """Represents a sportsbook quote in the canonical prompt-prescribed shape."""
@@ -178,15 +202,32 @@ class OddsQuote:
     )
     extra: Mapping[str, Any] | None = None
 
+    def decimal_odds(self) -> float:
+        """Return decimal odds for this quote."""
+
+        return american_to_decimal(self.american_odds)
+
+    def fractional_odds(self, *, max_denominator: int = 512) -> Tuple[int, int]:
+        """Return fractional odds for this quote."""
+
+        return american_to_fractional(
+            self.american_odds, max_denominator=max_denominator
+        )
+
+    def profit_multiplier(self) -> float:
+        """Return the net profit multiplier for a one-unit stake."""
+
+        return american_to_profit_multiplier(self.american_odds)
+
     def implied_probability(self) -> float:
         """Convert American odds into decimal implied probability."""
 
-        return implied_probability_from_decimal(american_to_decimal(self.american_odds))
+        return implied_probability_from_american(self.american_odds)
 
     def decimal_multiplier(self) -> float:
         """Return the net profit multiplier for a one-unit stake."""
 
-        return american_to_profit_multiplier(self.american_odds)
+        return self.profit_multiplier()
 
 
 class SportsbookScraper(ABC):

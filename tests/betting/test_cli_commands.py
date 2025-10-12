@@ -181,3 +181,50 @@ def test_ingest_command_uses_scheduler(
     assert scheduler.jobs[0]["jitter"] == pytest.approx(0.25)
     assert scheduler.jobs[0]["retries"] == 2
     assert scheduler.jobs[0]["retry_backoff"] == pytest.approx(0.1)
+
+
+def test_portfolio_allocation_prints_extended_summary(
+    cli_module, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class DummyOptimizer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def optimise(self, opportunities):
+            return [(opp, 1.0) for opp in opportunities]
+
+    monkeypatch.setattr(cli_module, "QuantumPortfolioOptimizer", DummyOptimizer)
+
+    opportunity = cli_module.Opportunity(
+        event_id="E1",
+        sportsbook="book",
+        book_market_group="Game Lines",
+        market="moneyline",
+        scope="game",
+        entity_type="team",
+        team_or_player="NE",
+        side=None,
+        line=None,
+        american_odds=+110,
+        model_probability=0.55,
+        push_probability=0.0,
+        implied_probability=0.476,
+        expected_value=0.05,
+        kelly_fraction=0.1,
+        extra={},
+    )
+
+    cli_module._portfolio_allocation(
+        [opportunity],
+        bankroll=100.0,
+        portfolio_fraction=1.0,
+        correlation_limits={},
+        risk_trials=5,
+        risk_seed=3,
+    )
+
+    out = capsys.readouterr().out
+    assert "Bankroll simulation summary:" in out
+    assert "Median terminal" in out
+    assert "Worst drawdown" in out
+    assert "95th percentile drawdown" in out

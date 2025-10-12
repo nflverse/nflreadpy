@@ -184,6 +184,10 @@ if TYPE_CHECKING:
 
     def fractional_to_decimal(numerator: int, denominator: int) -> float: ...
 
+    def implied_probability_from_american(value: int | float | str) -> float: ...
+
+    def implied_probability_to_decimal(probability: float) -> float: ...
+
     def best_prices_by_selection(
         quotes: Sequence[OddsQuote],
     ) -> Dict[Tuple[str, str, ScopeLiteral, str, str | None, float | None], OddsQuote]: ...
@@ -213,6 +217,8 @@ else:  # pragma: no cover - imported for runtime behaviour
     american_to_profit_multiplier = _scrapers.american_to_profit_multiplier
     best_prices_by_selection = _scrapers.best_prices_by_selection
     fractional_to_decimal = _scrapers.fractional_to_decimal
+    implied_probability_from_american = _scrapers.implied_probability_from_american
+    implied_probability_to_decimal = _scrapers.implied_probability_to_decimal
 
 if TYPE_CHECKING:
     from .ingestion import IngestedOdds as IngestedOddsType
@@ -316,6 +322,24 @@ class KellyCriterion:
         cap: float | None = None,
     ) -> float:
         decimal = fractional_to_decimal(numerator, denominator)
+        return KellyCriterion.fraction_from_decimal(
+            win_probability,
+            loss_probability,
+            decimal,
+            fractional_kelly=fractional_kelly,
+            cap=cap,
+        )
+
+    @staticmethod
+    def fraction_from_implied_probability(
+        win_probability: float,
+        loss_probability: float,
+        implied_probability: float,
+        *,
+        fractional_kelly: float = 1.0,
+        cap: float | None = None,
+    ) -> float:
+        decimal = implied_probability_to_decimal(implied_probability)
         return KellyCriterion.fraction_from_decimal(
             win_probability,
             loss_probability,

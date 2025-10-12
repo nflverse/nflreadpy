@@ -67,6 +67,9 @@ from .scrapers.base import (
     implied_probability_from_american,
     implied_probability_from_decimal,
     implied_probability_from_fractional,
+    implied_probability_to_american,
+    implied_probability_to_decimal,
+    implied_probability_to_fraction,
 )
 from .scrapers.mock import MockSportsbookScraper
 
@@ -119,5 +122,8 @@ __all__ = [
     "implied_probability_from_american",
     "implied_probability_from_decimal",
     "implied_probability_from_fractional",
+    "implied_probability_to_american",
+    "implied_probability_to_decimal",
+    "implied_probability_to_fraction",
     "consolidate_best_prices",
 ]

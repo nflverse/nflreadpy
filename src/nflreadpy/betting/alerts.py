@@ -11,12 +11,20 @@ import signal
 from collections.abc import Callable, Mapping, Sequence
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, IO, Any, Protocol
 
-try:  # pragma: no cover - Python 3.11+
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Py<3.11 fallback
-    import tomli as tomllib  # type: ignore
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    class _TomlLoader(Protocol):
+        def load(self, fp: IO[bytes], /) -> Any: ...
+
+    tomllib: _TomlLoader
+else:  # pragma: no branch - runtime import resolution
+    import importlib
+
+    try:  # pragma: no cover - Python 3.11+
+        tomllib = importlib.import_module("tomllib")
+    except ModuleNotFoundError:  # pragma: no cover - Py<3.11 fallback
+        tomllib = importlib.import_module("tomli")
 
 
 logger = logging.getLogger(__name__)
@@ -58,7 +66,7 @@ class SlackAlertSink:
     def send(
         self, subject: str, body: str, *, metadata: Mapping[str, Any] | None = None
     ) -> None:
-        payload = {"text": f"*{subject}*\n{body}"}
+        payload: dict[str, Any] = {"text": f"*{subject}*\n{body}"}
         if metadata:
             payload["metadata"] = dict(metadata)
         try:
@@ -147,32 +155,44 @@ class AlertConfiguration:
 
 def _load_yaml(path: Path) -> Mapping[str, Any]:
     try:
-        import yaml
-    except Exception:  # pragma: no cover - optional dependency missing
-        data: dict[str, Any] = {}
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if ":" not in stripped:
-                    continue
-                key, value = stripped.split(":", 1)
-                key = key.strip()
-                value = value.strip().strip("'\"")
-                if value.lower() in {"true", "false"}:
-                    data[key] = value.lower() == "true"
-                else:
-                    try:
-                        data[key] = int(value)
-                    except ValueError:
-                        try:
-                            data[key] = float(value)
-                        except ValueError:
-                            data[key] = value
-        return data
+        import importlib
+
+        yaml_module = importlib.import_module("yaml")
+        safe_load = getattr(yaml_module, "safe_load", None)
+    except ModuleNotFoundError:  # pragma: no cover - optional dependency missing
+        safe_load = None
+    if not callable(safe_load):
+        return _parse_minimal_yaml(path)
     with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle) or {}
+        loaded = safe_load(handle)
+    if isinstance(loaded, Mapping):
+        return loaded
+    return {}
+
+
+def _parse_minimal_yaml(path: Path) -> Mapping[str, Any]:
+    data: dict[str, Any] = {}
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if value.lower() in {"true", "false"}:
+                data[key] = value.lower() == "true"
+            else:
+                try:
+                    data[key] = int(value)
+                except ValueError:
+                    try:
+                        data[key] = float(value)
+                    except ValueError:
+                        data[key] = value
+    return data
 
 
 def load_alert_config(path: str | os.PathLike[str] | None = None) -> AlertConfiguration:
@@ -183,29 +203,39 @@ def load_alert_config(path: str | os.PathLike[str] | None = None) -> AlertConfig
         if not config_path.exists():
             raise FileNotFoundError(config_path)
         if config_path.suffix.lower() in {".yaml", ".yml"}:
-            data = _load_yaml(config_path)
+            raw_data: Any = _load_yaml(config_path)
         else:
             with config_path.open("rb") as handle:
-                data = tomllib.load(handle)
+                raw_data = tomllib.load(handle)
+        data: Mapping[str, Any] | None
+        if isinstance(raw_data, Mapping):
+            data = raw_data
+        else:
+            data = None
+        if data is None:
+            return AlertConfiguration()
         for key in ("tool", "nflreadpy", "alerts"):
-            if isinstance(data, Mapping) and key in data:
-                data = data[key]
+            next_data = data.get(key)
+            if isinstance(next_data, Mapping):
+                data = next_data
             else:
                 break
-        if not isinstance(data, Mapping):
-            data = {}
         return AlertConfiguration.from_mapping(data)
 
     project_pyproject = Path.cwd() / "pyproject.toml"
     if project_pyproject.exists():
         with project_pyproject.open("rb") as handle:
             data = tomllib.load(handle)
-        section = (
-            data.get("tool", {})
-            .get("nflreadpy", {})
-            .get("alerts", {})
-        )
-        if isinstance(section, Mapping):
+        section: Mapping[str, Any] | None = None
+        if isinstance(data, Mapping):
+            tool_section = data.get("tool")
+            if isinstance(tool_section, Mapping):
+                nflreadpy_section = tool_section.get("nflreadpy")
+                if isinstance(nflreadpy_section, Mapping):
+                    alerts_section = nflreadpy_section.get("alerts")
+                    if isinstance(alerts_section, Mapping):
+                        section = alerts_section
+        if section is not None:
             return AlertConfiguration.from_mapping(section)
     return AlertConfiguration()
 

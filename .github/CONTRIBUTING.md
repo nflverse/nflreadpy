@@ -21,15 +21,20 @@ Many hands make light work! Here are some ways you can contribute to this projec
 
 This project uses the following tooling:
 
-- uv for dependency management
+- uv or pip for dependency management
 - ruff for linting and formatting
 - mypy for type checking
 - pytest for testing
 - mkdocs for documentation site
 
+You can choose between uv or pip for managing development dependencies.
+
 ```bash
-# Install development dependencies
+# Install development dependencies with uv
 uv sync --dev
+
+# Alternatively, install development dependencies with pip
+pip install -e .[dev]
 
 # Run tests
 uv run pytest
@@ -46,6 +51,9 @@ uv run mkdocs serve
 # Build docs site
 uv run mkdocs build
 ```
+
+If you prefer pip, you can run the tools directly from your environment, for example
+`pytest`, `ruff`, `mypy`, or `mkdocs build --strict`.
 
 ## Code of Conduct
 

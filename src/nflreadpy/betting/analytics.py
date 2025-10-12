@@ -20,11 +20,14 @@ from typing import (
     Dict,
     List,
     Mapping,
+    MutableMapping,
     Protocol,
     Sequence,
     Tuple,
     TypeAlias,
 )
+
+from .tail import LadderPoint, fit_monotone_envelope
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -279,7 +282,6 @@ class KellyCriterion:
         self.fractional_kelly = max(0.0, float(self.fractional_kelly))
         if self.cap is not None:
             self.cap = max(0.0, float(self.cap))
-        self._last_fraction = None
 
     @property
     def last_fraction(self) -> float | None:
@@ -501,6 +503,8 @@ class EdgeDetector:
         self.correlation_penalty = correlation_penalty
         self._backend = "python"
         self._np = None
+        self._tail_alpha = 1.0
+        self._tail_beta = 1.0
         if backend in {"auto", "numpy"}:
             try:  # pragma: no cover - optional dependency
                 import numpy as np  # type: ignore
@@ -684,13 +688,20 @@ class EdgeDetector:
         self,
         evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
     ) -> Tuple[List[ProbabilityTriple], List[float]]:
+        base_adjusted, metadata = self._apply_tail_envelope(evaluations)
         adjusted: List[ProbabilityTriple] = []
         expected: List[float] = []
-        for quote, probability, result in evaluations:
+        for (quote, _base_probability, result), probability in zip(
+            evaluations, base_adjusted
+        ):
             adj_probability = self._apply_correlation(probability, quote, result)
             adjusted.append(adj_probability)
             multiplier = quote.decimal_multiplier()
             expected.append(adj_probability.win * multiplier - adj_probability.loss)
+            meta = metadata.get(id(quote))
+            if meta is not None:
+                meta["final_win"] = float(adj_probability.win)
+                self._store_tail_metadata(quote, meta)
         return adjusted, expected
 
     def _evaluate_probabilities_numpy(
@@ -699,22 +710,185 @@ class EdgeDetector:
     ) -> Tuple[List[ProbabilityTriple], List[float]]:
         np = self._np
         assert np is not None
-        wins = np.array([prob.win for _, prob, _ in evaluations], dtype=float)
-        pushes = np.array([prob.push for _, prob, _ in evaluations], dtype=float)
+        base_adjusted, metadata = self._apply_tail_envelope(evaluations)
+        wins = np.array([prob.win for prob in base_adjusted], dtype=float)
+        pushes = np.array([prob.push for prob in base_adjusted], dtype=float)
         multipliers = np.array([quote.decimal_multiplier() for quote, _, _ in evaluations], dtype=float)
         adjustments = np.array(
-            [self._correlation_factor(quote, prob, result) for quote, prob, result in evaluations],
+            [
+                self._correlation_factor(quote, prob, result)
+                for (quote, _base, result), prob in zip(evaluations, base_adjusted)
+            ],
             dtype=float,
         )
         adjusted_wins = wins + adjustments
         adjusted_wins = np.clip(adjusted_wins, 0.0, 1.0 - pushes)
         losses = 1.0 - adjusted_wins - pushes
         expected = adjusted_wins * multipliers - losses
-        adjusted = [
-            ProbabilityTriple(float(win), float(push))
-            for win, push in zip(adjusted_wins.tolist(), pushes.tolist())
-        ]
+        adjusted: List[ProbabilityTriple] = []
+        for (quote, _base_probability, _), probability, win, push in zip(
+            evaluations,
+            base_adjusted,
+            adjusted_wins.tolist(),
+            pushes.tolist(),
+        ):
+            tail_probability = ProbabilityTriple(float(win), float(push))
+            adjusted.append(tail_probability)
+            meta = metadata.get(id(quote))
+            if meta is not None:
+                meta["final_win"] = float(tail_probability.win)
+                self._store_tail_metadata(quote, meta)
         return adjusted, expected.tolist()
+
+    def _apply_tail_envelope(
+        self,
+        evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
+    ) -> Tuple[List[ProbabilityTriple], Dict[int, Dict[str, object]]]:
+        adjusted = [ProbabilityTriple(prob.win, prob.push) for _, prob, _ in evaluations]
+        metadata: Dict[int, Dict[str, object]] = {}
+        if not evaluations:
+            return adjusted, metadata
+        groups = self._group_tail_evaluations(evaluations)
+        if not groups:
+            return adjusted, metadata
+        for group_key, direction, indices in groups:
+            sorted_indices = [
+                idx
+                for idx in sorted(
+                    indices,
+                    key=lambda position: float(
+                        evaluations[position][0].line or 0.0
+                    ),
+                )
+                if evaluations[idx][0].line is not None
+            ]
+            if len(sorted_indices) < 2:
+                continue
+            ladder_points: List[LadderPoint] = []
+            for idx in sorted_indices:
+                quote, probability, result = evaluations[idx]
+                assert quote.line is not None
+                ladder_points.append(
+                    LadderPoint(
+                        line=float(quote.line),
+                        win_probability=float(probability.win),
+                        push_probability=float(probability.push),
+                        weight=self._ladder_weight(probability, result),
+                    )
+                )
+            try:
+                fitted = fit_monotone_envelope(
+                    ladder_points,
+                    direction=direction,
+                    alpha=self._tail_alpha,
+                    beta=self._tail_beta,
+                )
+            except ValueError:
+                continue
+            for idx, point, win in zip(sorted_indices, ladder_points, fitted):
+                quote, probability, _ = evaluations[idx]
+                push = float(probability.push)
+                bounded = max(0.0, min(1.0 - push, float(win)))
+                adjusted[idx] = ProbabilityTriple(bounded, push)
+                metadata[id(quote)] = {
+                    "group": group_key,
+                    "line": float(point.line),
+                    "raw_win": float(probability.win),
+                    "push": float(push),
+                    "adjusted_win": float(bounded),
+                    "method": "beta_isotonic",
+                    "direction": direction,
+                    "weight": float(point.weight),
+                    "prior": {"alpha": self._tail_alpha, "beta": self._tail_beta},
+                }
+        return adjusted, metadata
+
+    def _group_tail_evaluations(
+        self,
+        evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
+    ) -> List[Tuple[str, str, List[int]]]:
+        groups: Dict[Tuple[str, str], List[int]] = {}
+        for index, (quote, probability, result) in enumerate(evaluations):
+            if quote.line is None or result is None:
+                continue
+            if not self._is_ladder_quote(quote):
+                continue
+            direction = self._tail_direction(quote)
+            if direction is None:
+                continue
+            key = (self._ladder_group_key(quote), direction)
+            groups.setdefault(key, []).append(index)
+        return [
+            (group_key, direction, indices)
+            for (group_key, direction), indices in groups.items()
+            if len(indices) >= 2
+        ]
+
+    @staticmethod
+    def _ladder_group_key(quote: OddsQuote) -> str:
+        side = (quote.side or "").lower()
+        scope = str(quote.scope).lower()
+        return f"{quote.event_id}|{quote.market}|{quote.team_or_player}|{scope}|{side}"
+
+    def _tail_direction(self, quote: OddsQuote) -> str | None:
+        side = (quote.side or "").lower()
+        market = quote.market.lower()
+        if side in {"over", "yes"}:
+            return "decreasing"
+        if side in {"under", "no"}:
+            return "increasing"
+        if side in {"fav", "dog", "home", "away"}:
+            return "increasing"
+        if "over" in market and "under" not in market:
+            return "decreasing"
+        if "under" in market and "over" not in market:
+            return "increasing"
+        return None
+
+    def _is_ladder_quote(self, quote: OddsQuote) -> bool:
+        if quote.line is None:
+            return False
+        extra = quote.extra
+        if isinstance(extra, Mapping):
+            if bool(extra.get("matrix_row")):
+                return True
+            if "ladder" in extra or "tail_probability" in extra:
+                return True
+        market_tokens = (quote.book_market_group, quote.market)
+        for token in market_tokens:
+            lowered = token.lower()
+            if any(hint in lowered for hint in ("alternate", "ladder", "alt")):
+                return True
+        return False
+
+    @staticmethod
+    def _ladder_weight(
+        probability: ProbabilityTriple, result: SimulationResult | None
+    ) -> float:
+        if result is None:
+            return 1.0
+        iterations = getattr(result, "iterations", 0) or 0
+        if iterations <= 0:
+            return 1.0
+        return max(1.0, float(iterations) * max(1e-6, 1.0 - float(probability.push)))
+
+    def _store_tail_metadata(
+        self, quote: OddsQuote, payload: Mapping[str, object]
+    ) -> None:
+        existing = quote.extra
+        if isinstance(existing, MutableMapping):
+            target: MutableMapping[str, object] = existing
+        else:
+            target = dict(existing or {})
+            quote.extra = target
+        current = target.get("tail_probability")
+        combined: Dict[str, object]
+        if isinstance(current, Mapping):
+            combined = dict(current)
+            combined.update(payload)
+        else:
+            combined = dict(payload)
+        target["tail_probability"] = combined
 
     def _apply_correlation(
         self,

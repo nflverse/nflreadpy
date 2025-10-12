@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterable
+from pathlib import Path
 
 import pytest
+import polars as pl
 
 from nflreadpy.betting.analytics import EdgeDetector
+import nflreadpy.betting.models as betting_models
 from nflreadpy.betting.models import (
     BivariatePoissonEngine,
     GameSimulationConfig,
@@ -15,7 +19,10 @@ from nflreadpy.betting.models import (
     PlayerPropForecaster,
     SimulationResult,
     TeamRating,
+    get_scope_scaling_model,
+    set_scope_scaling_model,
 )
+from nflreadpy.betting.scope_scaling import ScopeScalingModel
 from nflreadpy.betting.scrapers.base import OddsQuote
 
 
@@ -83,9 +90,19 @@ def _historical_games(_sample_ratings: dict[str, TeamRating]) -> list[Historical
     ]
 
 
+@pytest.fixture()
+def _restore_scope_scaling() -> Iterable[None]:
+    original = get_scope_scaling_model()
+    try:
+        yield
+    finally:
+        set_scope_scaling_model(original)
+
+
 def test_bivariate_poisson_engine_generates_correlated_distribution(
     _sample_ratings: dict[str, TeamRating],
     _historical_games: list[HistoricalGameRecord],
+    _restore_scope_scaling: None,
 ) -> None:
     engine = BivariatePoissonEngine(
         _sample_ratings,
@@ -268,8 +285,8 @@ def test_edge_detector_applies_correlation_penalty() -> None:
         extra={},
     )
 
-    detector_neutral = EdgeDetector(value_threshold=0.0, correlation_penalty=0.0)
-    detector_correlated = EdgeDetector(value_threshold=0.0, correlation_penalty=0.5)
+    detector_neutral = EdgeDetector(value_threshold=-1.0, correlation_penalty=0.0)
+    detector_correlated = EdgeDetector(value_threshold=-1.0, correlation_penalty=0.5)
 
     neutral_edge = detector_neutral.detect([quote], [result])[0]
     correlated_edge = detector_correlated.detect([quote], [result])[0]
@@ -277,3 +294,165 @@ def test_edge_detector_applies_correlation_penalty() -> None:
     assert neutral_edge.expected_value < 0.0
     assert correlated_edge.expected_value > neutral_edge.expected_value
     assert correlated_edge.expected_value > 0.0
+
+
+def _build_scope_records(
+    season: int,
+    totals: list[float],
+    quarter_profile: dict[str, float],
+) -> list[dict[str, float | int | str]]:
+    records: list[dict[str, float | int | str]] = []
+    for total in totals:
+        q1 = total * quarter_profile["first_quarter"]
+        q2 = total * quarter_profile["second_quarter"]
+        q3 = total * quarter_profile["third_quarter"]
+        q4 = total - (q1 + q2 + q3)
+        h1 = q1 + q2
+        h2 = q3 + q4
+        records.extend(
+            [
+                {
+                    "season": season,
+                    "scope": "game",
+                    "scope_points": total,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "1h",
+                    "scope_points": h1,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "2h",
+                    "scope_points": h2,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "1q",
+                    "scope_points": q1,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "2q",
+                    "scope_points": q2,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "3q",
+                    "scope_points": q3,
+                    "game_points": total,
+                },
+                {
+                    "season": season,
+                    "scope": "4q",
+                    "scope_points": q4,
+                    "game_points": total,
+                },
+            ]
+        )
+    return records
+
+
+def test_scope_scaling_model_calibration_and_persistence(
+    tmp_path: Path,
+    _restore_scope_scaling: None,
+) -> None:
+    season_totals = {
+        2023: [44.0, 51.0, 38.0, 47.0],
+        2024: [45.0, 49.0, 41.0, 50.0],
+    }
+    season_profiles = {
+        2023: {
+            "first_quarter": 0.255,
+            "second_quarter": 0.255,
+            "third_quarter": 0.245,
+            "fourth_quarter": 0.245,
+        },
+        2024: {
+            "first_quarter": 0.27,
+            "second_quarter": 0.26,
+            "third_quarter": 0.24,
+            "fourth_quarter": 0.23,
+        },
+    }
+
+    records: list[dict[str, float | int | str]] = []
+    for season, totals in season_totals.items():
+        profile = season_profiles[season]
+        records.extend(_build_scope_records(season, totals, profile))
+
+    frame = pl.DataFrame(records)
+    model = ScopeScalingModel.calibrate(frame, season_column="season")
+
+    combined_total = sum(season_totals[2023]) + sum(season_totals[2024])
+    combined_first_half = sum(
+        (season_profiles[season]["first_quarter"] + season_profiles[season]["second_quarter"]) * sum(season_totals[season])
+        for season in season_totals
+    )
+    expected_first_half = combined_first_half / combined_total
+
+    assert model("game") == pytest.approx(1.0, rel=1e-6)
+    assert model("first_half") == pytest.approx(expected_first_half, rel=1e-6)
+    assert model("first_half", season=2024) == pytest.approx(
+        season_profiles[2024]["first_quarter"] + season_profiles[2024]["second_quarter"],
+        rel=1e-6,
+    )
+    assert model("second_half", season=2024) == pytest.approx(
+        season_profiles[2024]["third_quarter"] + season_profiles[2024]["fourth_quarter"],
+        rel=1e-6,
+    )
+
+    path = tmp_path / "scope_scaling.parquet"
+    model.save(path)
+    loaded = ScopeScalingModel.load(path, default_factors=ScopeScalingModel.DEFAULT_FACTORS)
+
+    set_scope_scaling_model(loaded)
+
+    half_total = betting_models._scope_factor("1h") + betting_models._scope_factor("2h")
+    assert pytest.approx(half_total, rel=1e-6) == 1.0
+
+    quarter_total = sum(betting_models._scope_factor(scope) for scope in ["1q", "2q", "3q", "4q"])
+    assert pytest.approx(quarter_total, rel=1e-6) == 1.0
+
+
+def test_scope_scaling_model_seasonal_refit() -> None:
+    season_profiles_initial = {
+        2023: {
+            "first_quarter": 0.25,
+            "second_quarter": 0.25,
+            "third_quarter": 0.25,
+            "fourth_quarter": 0.25,
+        }
+    }
+    initial_records = _build_scope_records(2023, [42.0, 48.0, 45.0, 39.0], season_profiles_initial[2023])
+    initial_frame = pl.DataFrame(initial_records)
+    initial_model = ScopeScalingModel.calibrate(initial_frame, season_column="season")
+
+    assert initial_model("first_half") == pytest.approx(0.5, rel=1e-6)
+
+    updated_profiles = {
+        2023: season_profiles_initial[2023],
+        2024: {
+            "first_quarter": 0.3,
+            "second_quarter": 0.27,
+            "third_quarter": 0.23,
+            "fourth_quarter": 0.2,
+        },
+    }
+    updated_records = []
+    for season, profile in updated_profiles.items():
+        totals = [41.0, 44.0, 46.0, 40.0]
+        updated_records.extend(_build_scope_records(season, totals, profile))
+
+    updated_frame = pl.DataFrame(updated_records)
+    refit_model = ScopeScalingModel.calibrate(updated_frame, season_column="season")
+
+    assert refit_model("first_half", season=2023) == pytest.approx(0.5, rel=1e-6)
+    assert refit_model("first_half", season=2024) == pytest.approx(0.57, rel=1e-6)
+    assert refit_model("second_half", season=2024) == pytest.approx(0.43, rel=1e-6)
+

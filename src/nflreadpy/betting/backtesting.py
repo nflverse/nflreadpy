@@ -1,4 +1,9 @@
-"""Historical odds backtesting utilities."""
+"""Historical odds backtesting utilities for sportsbook snapshots.
+
+This module loads historical open, mid, and closing snapshots, applies
+book-specific settlement rules, and derives profitability and calibration
+metrics that can be surfaced in dashboards.
+"""
 
 from __future__ import annotations
 
@@ -81,6 +86,7 @@ class Settlement:
     team_or_player: str
     market: str
     scope: str
+    snapshot_type: str | None
     side: str | None
     line: float | None
     american_odds: int
@@ -191,7 +197,7 @@ def simulate_settlements(
 ) -> Iterable[Settlement]:
     """Yield :class:`Settlement` objects for each odds snapshot."""
 
-    expected_columns = {
+    required_columns = {
         "event_id",
         "sportsbook",
         "market",
@@ -207,7 +213,7 @@ def simulate_settlements(
         "home_score",
         "away_score",
     }
-    missing = expected_columns.difference(snapshots.columns)
+    missing = required_columns.difference(snapshots.columns)
     if missing:
         raise ValueError(f"Snapshots missing required columns: {sorted(missing)}")
 
@@ -309,6 +315,9 @@ def _settle_row(
 ) -> Settlement:
     market = str(row["market"]).lower()
     scope = str(row["scope"])
+    snapshot_type = row.get("snapshot_type")
+    if snapshot_type is not None:
+        snapshot_type = str(snapshot_type)
     side = row.get("side")
     if side is not None:
         side = str(side)
@@ -353,6 +362,7 @@ def _settle_row(
         team_or_player=team_or_player,
         market=market,
         scope=scope,
+        snapshot_type=snapshot_type,
         side=side,
         line=line_value,
         american_odds=price,

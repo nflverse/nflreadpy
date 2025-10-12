@@ -8,6 +8,7 @@ import logging
 from collections import defaultdict
 from typing import Dict, List, Mapping, Sequence, Tuple
 
+from .alerts import AlertManager, get_alert_manager
 from .models import (
     PlayerPropForecaster,
     ProbabilityTriple,
@@ -64,9 +65,11 @@ class EdgeDetector:
         self,
         value_threshold: float = 0.02,
         player_model: PlayerPropForecaster | None = None,
+        alert_manager: AlertManager | None = None,
     ) -> None:
         self.value_threshold = value_threshold
         self.player_model = player_model or PlayerPropForecaster()
+        self.alert_manager = alert_manager or get_alert_manager()
 
     def detect(
         self, odds: Sequence[OddsQuote], simulations: Sequence[SimulationResult]
@@ -105,6 +108,17 @@ class EdgeDetector:
                 )
             )
         logger.info("Detected %d potential edges", len(opportunities))
+        if self.alert_manager:
+            self.alert_manager.notify_edges(
+                [
+                    {
+                        "team_or_player": opp.team_or_player,
+                        "american_odds": opp.american_odds,
+                        "expected_value": opp.expected_value,
+                    }
+                    for opp in opportunities
+                ]
+            )
         return opportunities
 
     def _probability_for_quote(
@@ -223,8 +237,16 @@ class LineMovement:
 class LineMovementAnalyzer:
     """Summarise line movement using stored odds history."""
 
-    def __init__(self, history: Sequence["IngestedOdds"]) -> None:
+    def __init__(
+        self,
+        history: Sequence["IngestedOdds"],
+        *,
+        alert_manager: AlertManager | None = None,
+        alert_threshold: int = 40,
+    ) -> None:
         self.history = list(history)
+        self.alert_manager = alert_manager or get_alert_manager()
+        self.alert_threshold = alert_threshold
 
     def summarise(self) -> List[LineMovement]:
         grouped: Dict[
@@ -257,7 +279,19 @@ class LineMovementAnalyzer:
                     latest_time=latest.observed_at,
                 )
             )
-        return sorted(movements, key=lambda movement: abs(movement.delta), reverse=True)
+        ordered = sorted(movements, key=lambda movement: abs(movement.delta), reverse=True)
+        if self.alert_manager:
+            self.alert_manager.notify_line_movement(
+                [
+                    {
+                        "key": movement.key,
+                        "delta": movement.delta,
+                    }
+                    for movement in ordered
+                ],
+                threshold=self.alert_threshold,
+            )
+        return ordered
 
 
 @dataclasses.dataclass(slots=True)
@@ -274,14 +308,65 @@ class PortfolioManager:
         bankroll: float,
         max_risk_per_bet: float = 0.02,
         max_event_exposure: float = 0.1,
+        compliance_engine: ComplianceEngine | None = None,
+        responsible_gaming: ResponsibleGamingControls | None = None,
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.bankroll = bankroll
         self.max_risk_per_bet = max_risk_per_bet
         self.max_event_exposure = max_event_exposure
         self.positions: List[PortfolioPosition] = []
         self._exposure: Dict[Tuple[str, str], float] = defaultdict(float)
+        self._compliance_engine = compliance_engine
+        self._controls = responsible_gaming or ResponsibleGamingControls()
+        self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
+        self._session_start_bankroll = bankroll
+        self._total_session_stake = 0.0
+        self._cooldown_until: dt.datetime | None = None
 
     def allocate(self, opportunity: Opportunity) -> PortfolioPosition | None:
+        now = dt.datetime.now(dt.timezone.utc)
+        if self._cooldown_until and now < self._cooldown_until:
+            self._audit_logger.warning(
+                "portfolio.rejected",
+                extra={
+                    "reason": "cooldown_active",
+                    "event_id": opportunity.event_id,
+                    "market": opportunity.market,
+                    "sportsbook": opportunity.sportsbook,
+                },
+            )
+            return None
+
+        if self._compliance_engine and not self._compliance_engine.validate(opportunity):
+            self._audit_logger.warning(
+                "portfolio.rejected",
+                extra={
+                    "reason": "compliance",
+                    "event_id": opportunity.event_id,
+                    "market": opportunity.market,
+                    "sportsbook": opportunity.sportsbook,
+                },
+            )
+            return None
+
+        session_loss = self._session_start_bankroll - self.bankroll
+        if (
+            self._controls.session_loss_limit is not None
+            and session_loss >= self._controls.session_loss_limit
+        ):
+            self._start_cooldown(now)
+            self._audit_logger.warning(
+                "portfolio.rejected",
+                extra={
+                    "reason": "session_loss_limit",
+                    "event_id": opportunity.event_id,
+                    "market": opportunity.market,
+                    "sportsbook": opportunity.sportsbook,
+                },
+            )
+            return None
+
         raw_stake = self.bankroll * self.max_risk_per_bet
         kelly_stake = self.bankroll * max(0.0, opportunity.kelly_fraction)
         stake = min(raw_stake, kelly_stake)
@@ -293,16 +378,56 @@ class PortfolioManager:
         if remaining <= 0.0:
             return None
         stake = min(stake, remaining)
+        if self._controls.session_stake_limit is not None:
+            remaining_session = self._controls.session_stake_limit - self._total_session_stake
+            if remaining_session <= 0:
+                self._start_cooldown(now)
+                self._audit_logger.warning(
+                    "portfolio.rejected",
+                    extra={
+                        "reason": "session_stake_limit",
+                        "event_id": opportunity.event_id,
+                        "market": opportunity.market,
+                        "sportsbook": opportunity.sportsbook,
+                    },
+                )
+                return None
+            stake = min(stake, remaining_session)
         if stake <= 0.0:
             return None
         self.bankroll -= stake
         self._exposure[event_key] += stake
         position = PortfolioPosition(opportunity=opportunity, stake=stake)
         self.positions.append(position)
+        self._total_session_stake += stake
+        self._audit_logger.info(
+            "portfolio.accepted",
+            extra={
+                "event_id": opportunity.event_id,
+                "market": opportunity.market,
+                "sportsbook": opportunity.sportsbook,
+                "stake": stake,
+            },
+        )
         return position
 
     def exposure_report(self) -> Dict[Tuple[str, str], float]:
         return dict(self._exposure)
+
+    def reset_session(self, bankroll: float | None = None) -> None:
+        """Reset session counters and optionally bankroll."""
+
+        if bankroll is not None:
+            self.bankroll = bankroll
+        self._session_start_bankroll = self.bankroll
+        self._total_session_stake = 0.0
+        self._cooldown_until = None
+
+    def _start_cooldown(self, reference: dt.datetime) -> None:
+        if self._controls.cooldown_seconds:
+            self._cooldown_until = reference + dt.timedelta(
+                seconds=self._controls.cooldown_seconds
+            )
 
 
 def consolidate_best_prices(opportunities: Sequence[Opportunity]) -> List[Opportunity]:

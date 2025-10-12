@@ -70,25 +70,27 @@ The cache layer stores the data for subsequent sessions.
 ## 5. Start background services
 
 The toolkit expects a continual stream of market quotes and model projections.
-Launch the ingestion worker alongside the analytics scheduler:
+Launch the ingestion worker alongside your analytics workflows using the CLI
+entry points:
 
 ```bash
-uv run python -m nflreadpy.betting.ingestion.service
-uv run python -m nflreadpy.betting.analytics.scheduler
+uv run nflreadpy-betting ingest --interval 60 --jitter 5
+uv run nflreadpy-betting simulate --refresh --iterations 25000
 ```
 
-Each process emits structured logs describing scraper health, latency, and
-throughput. Surface the log directories in your observability stack to spot
-upstream outages early.
+The ingestion command runs continuously when you supply a positive `--interval`
+and applies retry and jitter defaults from `betting.yaml`. Run the simulation
+command on demand (or via a scheduler such as `cron`) to refresh projections,
+evaluate line movement, and emit alerts.
 
 ## 6. Verify the installation
 
-With ingestion running, execute the health check command:
+With ingestion running, execute a one-off scrape to confirm end-to-end health:
 
 ```bash
-uv run nflreadpy-betting status
+uv run nflreadpy-betting ingest --interval 0 --retries 0
 ```
 
-The output confirms connectivity to sportsbooks, model registries, and the
-analytics database. Investigate any reported failures before deploying to
-production environments.
+A zero interval performs a single fetch, prints the number of stored quotes,
+and exits. Investigate any errors surfaced in the logs before promoting the
+stack to production.

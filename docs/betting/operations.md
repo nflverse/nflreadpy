@@ -3,29 +3,24 @@
 This runbook collects operational practices for the betting toolkit, including
 metrics instrumentation, alerting, and incident response.
 
-## Metrics
+## Monitoring
 
-The betting module emits Prometheus-formatted metrics through the telemetry
-package. Expose the `/metrics` endpoint by running the telemetry server:
+Use the supported CLI commands to monitor scraper health and model output.
 
-```bash
-uv run python -m nflreadpy.betting.telemetry --bind 0.0.0.0 --port 9100
-```
+- `uv run nflreadpy-betting ingest --interval 0 --retries 0` performs a
+  one-off scrape and prints the number of stored quotes. Schedule it via cron
+  to surface authentication failures or schema changes early.
+- `uv run nflreadpy-betting ingest --interval 60 --jitter 5` keeps the
+  collector running continuously. The command streams structured logs that can
+  be forwarded to your observability platform.
+- `uv run nflreadpy-betting simulate --iterations 25000` evaluates stored odds
+  without triggering a new scrape, making it suitable for post-ingestion
+  validation dashboards.
+- `uv run nflreadpy-betting scan --history-limit 500` highlights line movement
+  and expected value drift using previously ingested snapshots.
 
-Key metrics include:
-
-- `nflreadpy_ingestion_latency_seconds` (histogram): time to fetch and normalise
-a snapshot per sportsbook and market.
-- `nflreadpy_ingestion_errors_total` (counter): count of scraper failures by
-error type.
-- `nflreadpy_model_edge` (gauge): most recent expected value and Kelly fraction
-per market.
-- `nflreadpy_portfolio_exposure` (gauge): current exposure by team, market, and
-book.
-
-Scrapers and analytics tasks automatically register metrics collectors. Extend
-the telemetry configuration in `betting.yaml` to set custom namespaces, push
-intervals, or remote write targets.
+All commands respect storage, alert, and scheduler defaults defined in
+`betting.yaml`, so ensure production overrides are committed alongside code.
 
 ## Alert configuration
 
@@ -45,25 +40,28 @@ notifications:
 
 ### Recommended alerts
 
-- **Ingestion downtime**: Trigger when `nflreadpy_ingestion_errors_total` grows
-  faster than expected or when status checks fail.
-- **Stale data**: Alert when the most recent snapshot age exceeds the configured
-  polling interval.
-- **Model drift**: Monitor calibration metrics and fire when Brier score or log
-  loss deviates from historical baselines.
-- **Portfolio limits**: Send a warning when Kelly stakes or exposure exceed the
-  configured bankroll caps.
+- **Ingestion downtime**: Alert when scheduled `ingest --interval 0` health
+  checks fail or when continuous ingest logs stop producing snapshots within the
+  expected cadence.
+- **Stale data**: Alert when the most recent stored snapshot age exceeds the
+  configured polling interval.
+- **Model drift**: Monitor calibration metrics exported by your analytics
+  pipelines and fire when Brier score or log loss deviates from historical
+  baselines.
+- **Portfolio limits**: Send a warning when Kelly stakes or exposure reported by
+  the dashboard exceed the configured bankroll caps.
 
 ## Runbooks
 
 ### Ingestion failures
 
-1. Check the status command for failing sportsbooks:
+1. Run a one-off ingest to confirm credentials and API availability:
 
    ```bash
-   uv run nflreadpy-betting status --output table
+   uv run nflreadpy-betting ingest --interval 0 --retries 0
    ```
 
+   Investigate any failures reported in the logs or alert sinks.
 2. Review scraper logs for HTTP errors or upstream schema changes.
 3. Temporarily disable the affected sportsbook via configuration overrides if
    the outage persists.
@@ -71,12 +69,13 @@ notifications:
 
 ### Model regressions
 
-1. Replay the failing interval to reproduce the output:
+1. Replay historical odds using the backtest command to reproduce the output:
 
    ```bash
-   uv run nflreadpy-betting replay --from <start> --to <end> --models <model>
+   uv run nflreadpy-betting backtest --limit 250 --iterations 20000
    ```
 
+   Adjust `--limit` to control the number of stored snapshots to evaluate.
 2. Compare calibration metrics with the `analytics.metrics` dashboard panels.
 3. Roll back to the previous model version if confidence intervals degrade
    significantly.

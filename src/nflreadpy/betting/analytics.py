@@ -116,6 +116,16 @@ if TYPE_CHECKING:
     class ComplianceEngine(Protocol):
         def validate(self, opportunity: "Opportunity") -> bool: ...
 
+        def evaluate_metadata(
+            self,
+            *,
+            sportsbook: str,
+            metadata: Mapping[str, Any] | None = None,
+            market: str | None = None,
+            event_id: str | None = None,
+            log: bool = False,
+        ) -> tuple[bool, list[str]]: ...
+
     ScopeLiteral = Literal["game", "1h", "2h", "1q", "2q", "3q", "4q"]
     EntityLiteral = Literal["team", "player", "total", "either", "leader"]
 
@@ -848,17 +858,31 @@ class PortfolioManager:
             )
             return None
 
-        if self._compliance_engine and not self._compliance_engine.validate(opportunity):
-            self._audit_logger.warning(
-                "portfolio.rejected",
-                extra={
+        if self._compliance_engine:
+            metadata: Mapping[str, Any] | None = None
+            if isinstance(opportunity.extra, Mapping):
+                metadata = opportunity.extra
+            compliant, reasons = self._compliance_engine.evaluate_metadata(
+                sportsbook=opportunity.sportsbook,
+                market=opportunity.market,
+                event_id=opportunity.event_id,
+                metadata=metadata,
+                log=True,
+            )
+            if not compliant:
+                payload = {
                     "reason": "compliance",
                     "event_id": opportunity.event_id,
                     "market": opportunity.market,
                     "sportsbook": opportunity.sportsbook,
-                },
-            )
-            return None
+                }
+                if reasons:
+                    payload["reasons"] = list(reasons)
+                self._audit_logger.warning(
+                    "portfolio.rejected",
+                    extra=payload,
+                )
+                return None
 
         session_loss = self._session_start_bankroll - self.bankroll
         if (

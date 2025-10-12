@@ -155,6 +155,12 @@ def test_ingestion_enforces_compliance(
     assert any(
         key.startswith("non_compliant") for key in service.last_validation_summary
     )
+    discarded_records = [
+        rec
+        for rec in caplog.records
+        if rec.getMessage() == "ingestion.discarded"
+    ]
+    assert any(getattr(rec, "compliance_reasons", None) for rec in discarded_records)
 def test_future_timestamp_rejected(tmp_path: Path) -> None:
     now = dt.datetime.now(dt.timezone.utc)
     future_quote = OddsQuote(

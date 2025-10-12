@@ -65,6 +65,13 @@ an `nflreadpy.betting.audit` logger by default.  Applications can supply their
 own logger instances to capture compliance violations, rejected allocations, or
 validation discards and forward them to SIEM tooling.
 
+`PortfolioManager` emits `portfolio.rejected` warnings with a `reason` and, for
+compliance failures, a structured `reasons` list describing each policy breach.
+Likewise, `OddsIngestionService` populates `compliance_reasons` on
+`ingestion.discarded` records whenever quotes are filtered out by the compliance
+engine, making it easy to attribute rejections to specific jurisdiction or
+credential gaps.
+
 ## Putting It Together
 
 ```python

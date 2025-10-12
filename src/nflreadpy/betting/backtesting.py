@@ -13,6 +13,22 @@ import polars as pl
 RowMapping = Mapping[str, Any]
 
 
+__all__ = [
+    "BacktestMetrics",
+    "Settlement",
+    "SportsbookRules",
+    "closing_line_table",
+    "export_closing_line_report",
+    "export_reliability_diagram",
+    "get_sportsbook_rules",
+    "load_historical_snapshots",
+    "reliability_table",
+    "run_backtest",
+    "settlements_to_frame",
+    "simulate_settlements",
+]
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class SportsbookRules:
     """Encapsulate sportsbook-specific settlement behaviour."""
@@ -198,7 +214,7 @@ def export_reliability_diagram(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    table = _reliability_table(settlements, bins)
+    table = reliability_table(settlements, bins=bins)
     table.write_csv(output)
     return output
 
@@ -211,9 +227,24 @@ def export_closing_line_report(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
-    table = _closing_line_table(settlements)
+    table = closing_line_table(settlements)
     table.write_csv(output)
     return output
+
+
+def reliability_table(
+    settlements: Sequence[Settlement],
+    bins: int = 10,
+) -> pl.DataFrame:
+    """Return the reliability table used for calibration diagnostics."""
+
+    return _reliability_table(settlements, bins)
+
+
+def closing_line_table(settlements: Sequence[Settlement]) -> pl.DataFrame:
+    """Return the closing line comparison table."""
+
+    return _closing_line_table(settlements)
 
 
 def _settle_row(

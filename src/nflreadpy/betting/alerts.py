@@ -1,5 +1,4 @@
 """Alert routing utilities for sportsbook opportunity monitoring."""
-
 from __future__ import annotations
 
 import asyncio
@@ -356,7 +355,10 @@ class GracefulExit(RuntimeError):
 def install_signal_handlers(stop_callback: Callable[[], None]) -> None:
     """Install POSIX signal handlers that trigger ``stop_callback``."""
 
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - no running loop
+        loop = asyncio.get_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop_callback)

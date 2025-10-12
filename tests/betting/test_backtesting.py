@@ -9,10 +9,12 @@ import pytest
 from nflreadpy.betting.backtesting import (
     BacktestMetrics,
     SportsbookRules,
+    closing_line_table,
     export_closing_line_report,
     export_reliability_diagram,
     get_sportsbook_rules,
     load_historical_snapshots,
+    reliability_table,
     run_backtest,
     settlements_to_frame,
 )
@@ -66,6 +68,16 @@ def test_reliability_diagram_exports_expected_values(tmp_path: Path, snapshots: 
     assert pytest.approx(row["observed_rate"], rel=1e-6) == 0.75
 
 
+def test_reliability_table_matches_exported_results(snapshots: pl.DataFrame) -> None:
+    settlements = run_backtest(snapshots).settlements
+    table = reliability_table(settlements, bins=5)
+    assert table.shape == (1, 5)
+    row = table.row(0, named=True)
+    assert math.isclose(row["bin_lower"], 0.4)
+    assert math.isclose(row["bin_upper"], 0.6)
+    assert row["count"] == 6
+
+
 def test_closing_line_report_contains_odds_and_line_deltas(tmp_path: Path, snapshots: pl.DataFrame) -> None:
     settlements = run_backtest(snapshots).settlements
     output = tmp_path / "closing.csv"
@@ -79,6 +91,13 @@ def test_closing_line_report_contains_odds_and_line_deltas(tmp_path: Path, snaps
     assert pytest.approx(first["closing_implied_probability"], rel=1e-6) == 0.58333333
     spread = table.filter((pl.col("event_id") == "2024-NE-NYJ") & (pl.col("market") == "spread")).row(0, named=True)
     assert pytest.approx(spread["line_delta"], rel=1e-6) == -0.5
+
+
+def test_closing_line_table_returns_expected_columns(snapshots: pl.DataFrame) -> None:
+    settlements = run_backtest(snapshots).settlements
+    table = closing_line_table(settlements)
+    assert table.height == 6
+    assert {"odds_delta", "implied_delta", "line_delta"}.issubset(table.columns)
 
 
 def test_settlements_to_frame_round_trips_data(snapshots: pl.DataFrame) -> None:

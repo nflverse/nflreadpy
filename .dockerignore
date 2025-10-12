@@ -1,0 +1,15 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+__pycache__
+*.pyc
+build
+dist
+data
+.eggs
+.env
+.idea
+.vscode
+docs/site
+*.sqlite3

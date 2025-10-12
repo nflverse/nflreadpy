@@ -1,8 +1,12 @@
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
+# syntax=docker/dockerfile:1
+
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    VIRTUAL_ENV=/opt/venv
 
 RUN apt-get update \
     && apt-get install --no-install-recommends -y \
@@ -11,15 +15,41 @@ RUN apt-get update \
         python3-venv \
         build-essential \
     && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python3 /usr/local/bin/python \
-    && python -m pip install --upgrade pip
+    && python3 -m venv "$VIRTUAL_ENV"
+
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --upgrade pip uv
 
 WORKDIR /app
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
 
-COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir uv
+RUN uv pip install --no-cache-dir .[betting]
 
-COPY . .
-RUN uv pip install --system --no-cache .[betting]
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS runtime
 
-CMD ["nflreadpy-betting", "--help"]
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        python3 \
+        python3-venv \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/local/bin/python
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY config ./config
+
+LABEL org.opencontainers.image.source="https://github.com/nflverse/nflreadpy" \
+      org.opencontainers.image.title="nflreadpy betting (GPU)" \
+      org.opencontainers.image.description="GPU-enabled image for the nflreadpy betting toolkit"
+
+ENTRYPOINT ["nflreadpy-betting"]
+CMD ["--help"]

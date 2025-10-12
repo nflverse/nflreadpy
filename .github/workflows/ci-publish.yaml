@@ -46,6 +46,16 @@ jobs:
       contents: read
       packages: write
 
+    strategy:
+      matrix:
+        include:
+          - variant: cpu
+            file: Dockerfile.cpu
+            platforms: linux/amd64,linux/arm64
+          - variant: gpu
+            file: Dockerfile.gpu
+            platforms: linux/amd64
+
     steps:
       - uses: actions/checkout@v4
 
@@ -62,30 +72,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare image metadata
+      - name: Docker metadata
         id: meta
-        run: |
-          VERSION="${GITHUB_REF#refs/tags/}"
-          IMAGE="ghcr.io/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          flavor: |
+            suffix=-${{ matrix.variant }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.vendor=nflverse
+            variant=${{ matrix.variant }}
 
-      - name: Build and push CPU image
+      - name: Build and push ${{ matrix.variant }} image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile.cpu
+          file: ${{ matrix.file }}
           push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}-cpu
-            ${{ steps.meta.outputs.image }}:latest-cpu
-
-      - name: Build and push GPU image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: Dockerfile.gpu
-          push: true
-          tags: |
-            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}-gpu
-            ${{ steps.meta.outputs.image }}:latest-gpu
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: ${{ matrix.platforms }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,scope=${{ matrix.variant }},mode=max

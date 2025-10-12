@@ -31,9 +31,11 @@ from .scheduler import Scheduler
 from .scrapers.base import OddsQuote
 from .configuration import (
     BettingConfig,
+    ConfigurationError,
     create_edge_detector,
     create_ingestion_service,
     load_betting_config,
+    validate_betting_config,
 )
 
 
@@ -420,6 +422,14 @@ def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--value-threshold", type=float)
 
 
+def _configure_validate_parser(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--warnings-as-errors",
+        action="store_true",
+        help="Fail validation when configuration warnings are encountered.",
+    )
+
+
 def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> None:
     scheduler = config.ingestion.scheduler
     if hasattr(args, "interval") and args.interval is None:
@@ -468,6 +478,26 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
         args.risk_trials = analytics.risk_trials
     if hasattr(args, "risk_seed") and args.risk_seed is None:
         args.risk_seed = analytics.risk_seed
+
+
+async def _cmd_validate_config(config: BettingConfig, args: argparse.Namespace) -> None:
+    try:
+        warnings = validate_betting_config(config)
+    except ConfigurationError as exc:
+        print("Configuration invalid:")
+        for line in str(exc).splitlines():
+            text = line if line.startswith("-") else f"- {line}"
+            print(text)
+        raise SystemExit(1) from exc
+
+    print(f"Configuration '{config.environment}' is valid.")
+    if warnings:
+        print("Warnings:")
+        for message in warnings:
+            print(f"- {message}")
+        if getattr(args, "warnings_as_errors", False):
+            raise SystemExit(2)
+
 
 @COMMANDS.command(
     "ingest",
@@ -680,6 +710,20 @@ async def _dispatch(args: argparse.Namespace) -> None:
         base_path=args.config_file,
         environment=args.config_environment,
     )
+    requires_service = getattr(args, "requires_service", True)
+    if not requires_service:
+        await args.handler(config, args)
+        return
+
+    try:
+        warnings = validate_betting_config(config)
+    except ConfigurationError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if warnings:
+        for message in warnings:
+            print(f"[config-warning] {message}")
+
     alert_manager = get_alert_manager(args.alerts_config)
     storage_path = str(args.storage or config.ingestion.storage_path)
     args.storage = storage_path

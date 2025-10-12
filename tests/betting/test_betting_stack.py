@@ -16,6 +16,7 @@ from nflreadpy.betting.models import (
     PlayerFeatureRow,
     PlayerProjection,
     PlayerPropForecaster,
+    ProbabilityTriple,
     SimulationResult,
     TeamRating,
 )
@@ -128,7 +129,7 @@ def test_bivariate_engine_uses_historical_records() -> None:
     assert result.expected_total == pytest.approx(params.lambda_home + params.lambda_away, rel=0.05)
 
 
-def test_player_pipelines_fit_and_covariance() -> None:
+def test_player_pipelines_fit_and_covariance(simulation: SimulationResult) -> None:
     rows = [
         PlayerFeatureRow(
             player="Courtland Sutton",
@@ -139,6 +140,8 @@ def test_player_pipelines_fit_and_covariance() -> None:
             injury_status=0.1,
             weather=0.0,
             pace=65.0,
+            usage=0.24,
+            travel=1400.0,
             weight=1.0,
             game_id="2023-NE-NYJ",
         ),
@@ -151,6 +154,8 @@ def test_player_pipelines_fit_and_covariance() -> None:
             injury_status=0.0,
             weather=0.0,
             pace=65.0,
+            usage=0.18,
+            travel=900.0,
             weight=1.0,
             game_id="2023-NE-NYJ",
         ),
@@ -163,6 +168,8 @@ def test_player_pipelines_fit_and_covariance() -> None:
             injury_status=0.2,
             weather=-5.0,
             pace=61.0,
+            usage=0.27,
+            travel=1200.0,
             weight=0.9,
             game_id="2023-DEN-BUF",
         ),
@@ -175,6 +182,8 @@ def test_player_pipelines_fit_and_covariance() -> None:
             injury_status=0.1,
             weather=-5.0,
             pace=61.0,
+            usage=0.21,
+            travel=800.0,
             weight=0.9,
             game_id="2023-DEN-BUF",
         ),
@@ -187,7 +196,14 @@ def test_player_pipelines_fit_and_covariance() -> None:
         "over",
         75.0,
         "game",
-        {"opponent": "BUF", "injury_status": 0.2, "weather": -5.0, "pace": 61.0},
+        {
+            "opponent": "BUF",
+            "injury_status": 0.2,
+            "weather": -5.0,
+            "pace": 61.0,
+            "usage": 0.27,
+            "travel": 1200.0,
+        },
     )
     assert 0.0 <= projection.win <= 1.0
     covariance = forecaster._component_covariance(
@@ -195,10 +211,63 @@ def test_player_pipelines_fit_and_covariance() -> None:
         "J.K. Dobbins",
         "receiving_yards",
         "game",
-        {"opponent": "BUF", "injury_status": 0.2, "weather": -5.0, "pace": 61.0},
-        {"opponent": "BUF", "injury_status": 0.1, "weather": -5.0, "pace": 61.0},
+        {
+            "opponent": "BUF",
+            "injury_status": 0.2,
+            "weather": -5.0,
+            "pace": 61.0,
+            "usage": 0.27,
+            "travel": 1200.0,
+        },
+        {
+            "opponent": "BUF",
+            "injury_status": 0.1,
+            "weather": -5.0,
+            "pace": 61.0,
+            "usage": 0.21,
+            "travel": 800.0,
+        },
     )
     assert abs(covariance) > 1e-6
+    detector = EdgeDetector(
+        value_threshold=-1.0, player_model=forecaster, correlation_penalty=0.2
+    )
+    correlated_quote = OddsQuote(
+        event_id="2023-DEN-BUF",
+        sportsbook="testbook",
+        book_market_group="Player Props",
+        market="receiving_yards",
+        scope="game",
+        entity_type="player",
+        team_or_player="Courtland Sutton",
+        side="over",
+        line=74.5,
+        american_odds=-115,
+        observed_at=dt.datetime.now(dt.timezone.utc),
+        extra={
+            "opponent": "BUF",
+            "injury_status": 0.2,
+            "weather": -5.0,
+            "pace": 61.0,
+            "usage": 0.27,
+            "travel": 1200.0,
+            "correlates_with_player": "J.K. Dobbins",
+            "correlates_market": "receiving_yards",
+            "correlates_scope": "game",
+            "correlates_features": {
+                "opponent": "BUF",
+                "injury_status": 0.1,
+                "weather": -5.0,
+                "pace": 61.0,
+                "usage": 0.21,
+                "travel": 800.0,
+            },
+        },
+    )
+    adjustment = detector._correlation_factor(
+        correlated_quote, ProbabilityTriple(0.55), simulation
+    )
+    assert adjustment != 0.0
 
 
 def test_either_probability_uses_covariance() -> None:

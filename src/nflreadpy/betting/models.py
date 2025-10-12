@@ -1272,6 +1272,8 @@ class PlayerFeatureRow:
     injury_status: float = 0.0
     weather: float = 0.0
     pace: float = 0.0
+    usage: float = 0.0
+    travel: float = 0.0
     weight: float = 1.0
     game_id: str | None = None
 
@@ -1326,6 +1328,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
         self._coefficients: List[float] | None = None
         self._residual_variance: float = 25.0
         self._mean_pace: float = 0.0
+        self._mean_usage: float = 0.0
+        self._mean_travel: float = 0.0
 
     def fit(self, rows: Sequence[PlayerFeatureRow]) -> None:
         if not rows:
@@ -1334,10 +1338,22 @@ class GLMPlayerModel(PlayerOutcomeModel):
         targets: List[float] = []
         weights: List[float] = []
         self._mean_pace = statistics.fmean(row.pace for row in rows) if rows else 60.0
+        self._mean_usage = (
+            statistics.fmean(row.usage for row in rows) if rows else 0.0
+        )
+        self._mean_travel = (
+            statistics.fmean(row.travel for row in rows) if rows else 0.0
+        )
         for row in rows:
             features.append(
                 self._encode(
-                    row.player, row.opponent, row.injury_status, row.weather, row.pace
+                    row.player,
+                    row.opponent,
+                    row.injury_status,
+                    row.weather,
+                    row.pace,
+                    row.usage,
+                    row.travel,
                 )
             )
             targets.append(row.target)
@@ -1369,6 +1385,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
             _coerce_float(features.get("injury_status"), "injury_status", 0.0),
             _coerce_float(features.get("weather"), "weather", 0.0),
             _coerce_float(features.get("pace"), "pace", self._mean_pace),
+            _coerce_float(features.get("usage"), "usage", self._mean_usage),
+            _coerce_float(features.get("travel"), "travel", self._mean_travel),
         )
         raw = self._predict_raw(encoded)
         factor = _scope_factor(scope)
@@ -1407,6 +1425,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
             _coerce_float(features_a.get("injury_status"), "injury_status", 0.0),
             _coerce_float(features_a.get("weather"), "weather", 0.0),
             _coerce_float(features_a.get("pace"), "pace", self._mean_pace),
+            _coerce_float(features_a.get("usage"), "usage", self._mean_usage),
+            _coerce_float(features_a.get("travel"), "travel", self._mean_travel),
         )
         encoded_b = self._encode(
             player_b,
@@ -1414,6 +1434,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
             _coerce_float(features_b.get("injury_status"), "injury_status", 0.0),
             _coerce_float(features_b.get("weather"), "weather", 0.0),
             _coerce_float(features_b.get("pace"), "pace", self._mean_pace),
+            _coerce_float(features_b.get("usage"), "usage", self._mean_usage),
+            _coerce_float(features_b.get("travel"), "travel", self._mean_travel),
         )
         dot = sum(a * b for a, b in zip(encoded_a, encoded_b))
         norm_a = math.sqrt(sum(a**2 for a in encoded_a))
@@ -1431,6 +1453,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
         injury_status: float,
         weather: float,
         pace: float,
+        usage: float,
+        travel: float,
     ) -> List[float]:
         return [
             _hash_token(player),
@@ -1438,6 +1462,8 @@ class GLMPlayerModel(PlayerOutcomeModel):
             injury_status,
             weather,
             pace - self._mean_pace,
+            usage - self._mean_usage,
+            travel - self._mean_travel,
         ]
 
     def _predict_raw(self, encoded: Sequence[float]) -> float:
@@ -1469,6 +1495,8 @@ class XGBoostPlayerModel(GLMPlayerModel):
                     "injury_status": row.injury_status,
                     "weather": row.weather,
                     "pace": row.pace,
+                    "usage": row.usage,
+                    "travel": row.travel,
                 },
             )
             if base is None:
@@ -1521,7 +1549,13 @@ class NGBoostPlayerModel(GLMPlayerModel):
             return
         features = [
             self._encode(
-                row.player, row.opponent, row.injury_status, row.weather, row.pace
+                row.player,
+                row.opponent,
+                row.injury_status,
+                row.weather,
+                row.pace,
+                row.usage,
+                row.travel,
             )
             for row in rows
         ]
@@ -1550,6 +1584,8 @@ class NGBoostPlayerModel(GLMPlayerModel):
                 _coerce_float(features.get("injury_status"), "injury_status", 0.0),
                 _coerce_float(features.get("weather"), "weather", 0.0),
                 _coerce_float(features.get("pace"), "pace", self._mean_pace),
+                _coerce_float(features.get("usage"), "usage", self._mean_usage),
+                _coerce_float(features.get("travel"), "travel", self._mean_travel),
             )
             variance = sum(
                 coeff * value
@@ -1940,6 +1976,28 @@ class PlayerPropForecaster:
         if covariances:
             return statistics.fmean(covariances)
         return 0.0
+
+    def component_correlation(
+        self,
+        player_a: str,
+        player_b: str,
+        market: str,
+        scope: str,
+        features_a: Mapping[str, object],
+        features_b: Mapping[str, object],
+    ) -> float:
+        """Return the correlation coefficient implied by the learned covariance."""
+
+        covariance = self._component_covariance(
+            player_a, player_b, market, scope, features_a, features_b
+        )
+        if covariance == 0.0:
+            return 0.0
+        _, stdev_a = self.projection_stats(player_a, market, scope, features_a)
+        _, stdev_b = self.projection_stats(player_b, market, scope, features_b)
+        denom = max(1e-6, stdev_a * stdev_b)
+        correlation = covariance / denom
+        return max(-1.0, min(1.0, correlation))
 
     def _resolve_projection(
         self,

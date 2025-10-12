@@ -59,6 +59,7 @@ class OddsIngestionService:
         normalizer: NameNormalizer | None = None,
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
         alert_sink: AlertSink | None = None,
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -68,6 +69,7 @@ class OddsIngestionService:
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
         self._stale_after = stale_after
         self._alert_sink = alert_sink
+        self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
@@ -329,9 +331,22 @@ class OddsIngestionService:
                     quote.event_id,
                     reason,
                 )
+                self._audit_logger.warning(
+                    "ingestion.discarded",
+                    extra={
+                        "reason": reason,
+                        "event_id": quote.event_id,
+                        "sportsbook": quote.sportsbook,
+                        "market": quote.market,
+                    },
+                )
         self._last_validation_summary = dict(summary)
         if summary:
             logger.warning("Discarded quotes summary: %s", summary)
+            self._audit_logger.warning(
+                "ingestion.validation_failed",
+                extra={"discarded": dict(summary)},
+            )
         return valid
 
     def _validate_quote(

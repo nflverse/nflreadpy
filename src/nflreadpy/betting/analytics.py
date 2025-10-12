@@ -80,6 +80,16 @@ if TYPE_CHECKING:
             extra: Mapping[str, object] | None = None,
         ) -> Tuple[float, float]: ...
 
+        def component_correlation(
+            self,
+            player_a: str,
+            player_b: str,
+            market: str,
+            scope: str,
+            features_a: Mapping[str, object],
+            features_b: Mapping[str, object],
+        ) -> float: ...
+
     class SimulationBenchmark:
         backend: str
         simulations_run: int
@@ -590,6 +600,46 @@ class EdgeDetector:
             corr = result.correlation((base, ""), ("total", ""))
         elif quote.entity_type in {"total", "game_total"}:
             corr = result.correlation(("total", ""), ("total", ""))
+        elif quote.entity_type == "player":
+            extra_mapping: Mapping[str, object]
+            if isinstance(quote.extra, Mapping):
+                extra_mapping = quote.extra
+            else:
+                extra_mapping = {}
+            correlated_player = extra_mapping.get("correlates_with_player")
+            if isinstance(correlated_player, str):
+                correlated_market = str(
+                    extra_mapping.get("correlates_market") or quote.market
+                )
+                correlated_scope = str(
+                    extra_mapping.get("correlates_scope") or quote.scope
+                )
+                ignore_keys = {
+                    "correlates_with_player",
+                    "correlates_market",
+                    "correlates_scope",
+                    "correlates_features",
+                }
+                base_features = {
+                    key: value
+                    for key, value in extra_mapping.items()
+                    if key not in ignore_keys
+                }
+                correlated_features_raw = extra_mapping.get("correlates_features")
+                if isinstance(correlated_features_raw, Mapping):
+                    correlated_features = dict(correlated_features_raw)
+                else:
+                    correlated_features = {}
+                corr = self.player_model.component_correlation(
+                    quote.team_or_player,
+                    correlated_player,
+                    correlated_market,
+                    correlated_scope,
+                    base_features,
+                    correlated_features,
+                )
+            else:
+                corr = 0.0
         else:
             corr = 0.0
         if corr == 0.0:

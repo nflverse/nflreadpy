@@ -69,6 +69,19 @@ class DashboardSearchState:
         return bool(needle and needle in haystack)
 
 
+@dataclasses.dataclass(slots=True)
+class RiskSummary:
+    """Aggregate bankroll and exposure metrics for the risk panel."""
+
+    bankroll: float
+    opportunity_fraction: float
+    portfolio_fraction: float
+    positions: Sequence[PortfolioPosition] = dataclasses.field(default_factory=tuple)
+    exposure_by_event: Mapping[Tuple[str, str], float] = dataclasses.field(default_factory=dict)
+    correlation_exposure: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    simulation: BankrollSimulationResult | None = None
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardFilters:
     """Collection of filters applied to dashboard data."""
@@ -183,26 +196,12 @@ class DashboardContext:
     simulations: Sequence[SimulationResult]
     opportunities: Sequence[Opportunity]
     search_results: dict[str, Sequence[object]]
-    risk_summary: "RiskSummary | None"
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class RiskSummary:
-    """Aggregated view of bankroll exposure for the risk panel."""
-
-    bankroll: float
-    opportunity_fraction: float
-    portfolio_fraction: float
-    positions: Sequence[PortfolioPosition]
-    exposure_by_event: Mapping[tuple[str, str], float]
-    correlation_exposure: Mapping[str, float]
-    simulation: BankrollSimulationResult | None = None
+    risk_summary: RiskSummary | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardPanelView:
     """Rendered content for a single dashboard panel."""
-
     state: DashboardPanelState
     body: tuple[str, ...]
 
@@ -210,7 +209,6 @@ class DashboardPanelView:
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardSnapshot:
     """Structured representation of the dashboard output."""
-
     header: tuple[str, ...]
     panels: tuple[DashboardPanelView, ...]
     context: DashboardContext

@@ -1,9 +1,8 @@
 """Integration tests for all nflreadpy functions."""
 
+import nflreadpy as nfl
 import polars as pl
 import pytest
-
-import nflreadpy as nfl
 
 
 class TestImports:

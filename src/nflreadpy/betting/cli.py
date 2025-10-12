@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import dataclasses
+import datetime as dt
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -673,6 +674,10 @@ def _apply_config_defaults(args: argparse.Namespace, config: BettingConfig) -> N
         args.history_limit = analytics.history_limit
     if hasattr(args, "movement_threshold") and args.movement_threshold is None:
         args.movement_threshold = analytics.movement_threshold
+    if hasattr(args, "movement_depth") and getattr(args, "movement_depth", None) is None:
+        args.movement_depth = getattr(analytics, "movement_depth", None)
+    if hasattr(args, "stale_after_minutes") and getattr(args, "stale_after_minutes", None) is None:
+        args.stale_after_minutes = getattr(analytics, "stale_after_minutes", 10.0)
 
     bankroll = getattr(args, "bankroll", None)
     if bankroll is None and hasattr(args, "bankroll"):
@@ -865,6 +870,11 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
     alert_manager = context.alert_manager
     latest = await _ensure_latest(service, alert_manager, refresh=args.refresh)
     quotes = _quotes_from_ingested(latest)
+    history = await _ensure_history(
+        service,
+        alert_manager,
+        limit=args.history_limit,
+    )
     simulations = _run_simulations(quotes, args.iterations)
     correlation_limits = _parse_correlation_limits(args.correlation_limit)
     opportunities = _detect_opportunities(
@@ -897,6 +907,12 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         metadata={"source": "dashboard"},
     )
     dashboard = Dashboard()
+    if args.movement_depth is not None:
+        dashboard.movement_depth = args.movement_depth
+    if args.movement_threshold is not None:
+        dashboard.movement_threshold = args.movement_threshold
+    if args.stale_after_minutes is not None:
+        dashboard.stale_after = dt.timedelta(minutes=args.stale_after_minutes)
     risk_summary = RiskSummary(
         bankroll=args.bankroll,
         opportunity_fraction=args.kelly_fraction,
@@ -909,7 +925,18 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         bankroll_summary=manager.bankroll_summary(),
         optimizer_comparison=dashboard_comparison,
     )
-    rendered = dashboard.render(latest, simulations, opportunities, risk_summary=risk_summary)
+    rendered = dashboard.render(
+        latest,
+        simulations,
+        opportunities,
+        risk_summary=risk_summary,
+        movement_history=history,
+        movement_depth=args.movement_depth,
+        movement_threshold=args.movement_threshold,
+        stale_after=dt.timedelta(minutes=args.stale_after_minutes)
+        if args.stale_after_minutes is not None
+        else None,
+    )
     print(rendered)
 
 

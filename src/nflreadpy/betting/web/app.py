@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
-from typing import TYPE_CHECKING, Iterable, Protocol, Sequence
+from typing import TYPE_CHECKING, Iterable, Mapping, Protocol, Sequence
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     import polars as pl
+    from ..analytics import LineMovement
 
     from ..backtesting import QuantumScenarioComparison
 
@@ -20,6 +21,7 @@ from ..dashboard_core import (
     is_quarter_scope,
     normalize_scope,
     build_ladder_matrix,
+    render_sparkline,
 )
 from ..ingestion import IngestedOdds
 from ..utils import american_to_decimal
@@ -125,10 +127,11 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
         if callable(rerun):  # pragma: no branch - streamlit shim
             rerun()
 
+    dashboard = Dashboard()
     live_quotes = list(provider.live_markets())
     opportunities = list(getattr(provider, "opportunities", lambda: [])())
     filters = DashboardFilters()
-    available = _collect_options(live_quotes, opportunities)
+    available = dashboard.available_options(live_quotes, opportunities)
 
     sidebar.header("Filters")
     selected_books = sidebar.multiselect(
@@ -148,6 +151,15 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
     )
     include_quarters = sidebar.checkbox("Include quarter markets", value=True)
     include_halves = sidebar.checkbox("Include half markets", value=True)
+    default_depth = dashboard.movement_depth or 6
+    movement_depth = sidebar.slider(
+        "Movement depth", min_value=1, max_value=20, value=default_depth
+    )
+    default_stale_minutes = int(dashboard.stale_after.total_seconds() // 60)
+    stale_after_minutes = sidebar.slider(
+        "Stale after (minutes)", min_value=1, max_value=60, value=default_stale_minutes
+    )
+    stale_after = dt.timedelta(minutes=stale_after_minutes)
 
     filters = filters.update(
         sportsbooks=_fallback_to_all(selected_books, available["sportsbooks"]),
@@ -167,7 +179,7 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
     st.caption(f"Last updated: {dt.datetime.now(dt.timezone.utc).isoformat()}")
 
     st.header("Live Markets")
-    live_table = _live_market_table(filtered_quotes)
+    live_table = _live_market_table(filtered_quotes, stale_after=stale_after)
     if live_table.height == 0:
         st.info("No live markets available for the selected filters.")
     else:
@@ -179,9 +191,21 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
         st.dataframe(_as_streamlit_data(opp_table), use_container_width=True)
 
     st.header("Line Movement")
-    history_points = [
+    raw_history = [
         point for point in provider.line_history() if _line_point_matches(point, filters)
     ]
+    history_quotes = _line_history_quotes(raw_history)
+    movements = line_movement_summary(history_quotes, depth=movement_depth)
+    movement_series = build_movement_series(
+        history_quotes,
+        max_points=max(movement_depth * 4, 12),
+    )
+    top_keys = {movement.key for movement in movements}
+    history_points = (
+        [point for point in raw_history if _line_point_key(point) in top_keys]
+        if top_keys
+        else raw_history
+    )
     history_frame = _line_history_frame(history_points)
     if history_frame.height == 0:
         st.info("No line movement history for the selected filters.")
@@ -212,6 +236,11 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
             },
             use_container_width=True,
         )
+    summary_frame = _movement_summary_frame(movements, movement_series)
+    if summary_frame.height == 0:
+        st.info("No significant movement detected within the selected depth.")
+    else:
+        st.dataframe(_as_streamlit_data(summary_frame), use_container_width=True)
 
     st.header("Line Ladders")
     ladder_matrix = build_ladder_matrix(filtered_quotes)
@@ -342,7 +371,9 @@ def _fallback_to_all(selected: Sequence[str], available: Sequence[str]) -> Itera
     return selected
 
 
-def _live_market_table(odds: Sequence[IngestedOdds]) -> "pl.DataFrame":
+def _live_market_table(
+    odds: Sequence[IngestedOdds], *, stale_after: dt.timedelta
+) -> "pl.DataFrame":
     pl = _lazy_polars()
     if not odds:
         return pl.DataFrame(
@@ -355,9 +386,12 @@ def _live_market_table(odds: Sequence[IngestedOdds]) -> "pl.DataFrame":
                 "side": pl.String,
                 "line": pl.Float64,
                 "american_odds": pl.Int64,
+                "age": pl.String,
+                "fresh": pl.String,
                 "observed_at": pl.String,
             }
         )
+    now = dt.datetime.now(dt.timezone.utc)
     return pl.DataFrame(
         [
             {
@@ -369,6 +403,10 @@ def _live_market_table(odds: Sequence[IngestedOdds]) -> "pl.DataFrame":
                 "side": quote.side or "-",
                 "line": quote.line,
                 "american_odds": quote.american_odds,
+                "age": format_age(now - quote.observed_at),
+                "fresh": "⚠️ Stale"
+                if (now - quote.observed_at) > stale_after
+                else "Fresh",
                 "observed_at": quote.observed_at.isoformat(),
             }
             for quote in odds
@@ -487,6 +525,50 @@ def _line_history_frame(points: Sequence[LineMovementPoint]) -> "pl.DataFrame":
     ).sort("observed_at")
 
 
+def _movement_summary_frame(
+    movements: Sequence[LineMovement],
+    series: Mapping[
+        tuple[str, str, str, str, str | None, float | None],
+        tuple[tuple[dt.datetime, int], ...],
+    ],
+) -> "pl.DataFrame":
+    pl = _lazy_polars()
+    if not movements:
+        return pl.DataFrame(
+            schema={
+                "event": pl.String,
+                "market": pl.String,
+                "scope": pl.String,
+                "selection": pl.String,
+                "delta": pl.Int64,
+                "opening_price": pl.Int64,
+                "latest_price": pl.Int64,
+                "sparkline": pl.String,
+            }
+        )
+    records: list[dict[str, object]] = []
+    for movement in movements:
+        history = series.get(movement.key, ())
+        spark = render_sparkline([price for _, price in history])
+        event_id, market, scope, selection, side, line_value = movement.key
+        label = selection if side is None else f"{selection} {side}"
+        if line_value is not None:
+            label = f"{label} {line_value:+.1f}"
+        records.append(
+            {
+                "event": event_id,
+                "market": market,
+                "scope": scope,
+                "selection": label,
+                "delta": movement.delta,
+                "opening_price": movement.opening_price,
+                "latest_price": movement.latest_price,
+                "sparkline": spark,
+            }
+        )
+    return pl.DataFrame(records)
+
+
 def _calibration_frame(points: Sequence[CalibrationPoint]) -> "pl.DataFrame":
     pl = _lazy_polars()
     if not points:
@@ -602,6 +684,37 @@ def _best_scope_for_line(
             best_price = decimal
             best_scope = scope
     return best_scope
+
+
+def _line_history_quotes(points: Sequence[LineMovementPoint]) -> list[IngestedOdds]:
+    return [
+        IngestedOdds(
+            event_id=point.event_id,
+            sportsbook=point.sportsbook,
+            book_market_group=point.market,
+            market=point.market,
+            scope=point.scope,
+            entity_type="team",
+            team_or_player=point.selection,
+            side=None,
+            line=point.line,
+            american_odds=point.american_odds,
+            observed_at=point.observed_at,
+            extra={},
+        )
+        for point in points
+    ]
+
+
+def _line_point_key(point: LineMovementPoint) -> tuple[str, str, str, str, str | None, float | None]:
+    return (
+        point.event_id,
+        point.market,
+        point.scope,
+        point.selection,
+        None,
+        point.line,
+    )
 
 
 def _line_point_matches(point: LineMovementPoint, filters: DashboardFilters) -> bool:

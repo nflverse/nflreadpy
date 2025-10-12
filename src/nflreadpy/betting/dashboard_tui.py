@@ -27,6 +27,9 @@ class DashboardFeed(Protocol):
     def risk(self) -> RiskSummary | None:  # pragma: no cover - optional
         ...
 
+    def line_history(self) -> Sequence[IngestedOdds]:  # pragma: no cover - optional
+        ...
+
 
 class DashboardKeyboardController:
     """State container for keyboard-driven dashboard sessions."""
@@ -117,14 +120,22 @@ class DashboardKeyboardController:
         odds: Sequence[IngestedOdds],
         simulations: Sequence[SimulationResult],
         opportunities: Sequence[Opportunity],
+        movement_history: Sequence[IngestedOdds] | None = None,
         *,
         risk_summary: RiskSummary | None = None,
+        movement_depth: int | None = None,
+        movement_threshold: int | None = None,
+        stale_after: dt.timedelta | None = None,
     ) -> DashboardSnapshot:
         snapshot = self.dashboard.snapshot(
             odds,
             simulations,
             opportunities,
             risk_summary=risk_summary,
+            movement_history=movement_history,
+            movement_depth=movement_depth,
+            movement_threshold=movement_threshold,
+            stale_after=stale_after,
         )
         self.last_snapshot = snapshot
         return snapshot
@@ -157,13 +168,13 @@ class _CursesDashboardApp:
         curses.curs_set(0)
         screen.nodelay(True)
         screen.timeout(200)
-        snapshot = self.controller.refresh(*self._load_data())
+        snapshot = self._refresh_controller()
         self._draw(screen, snapshot)
         last_refresh = time.monotonic()
         while True:
             now = time.monotonic()
             if self._needs_refresh or (now - last_refresh) >= self.refresh_seconds:
-                snapshot = self.controller.refresh(*self._load_data())
+                snapshot = self._refresh_controller()
                 self._draw(screen, snapshot)
                 self._needs_refresh = False
                 last_refresh = now
@@ -309,12 +320,30 @@ class _CursesDashboardApp:
 
     def _load_data(
         self,
-    ) -> tuple[Sequence[IngestedOdds], Sequence[SimulationResult], Sequence[Opportunity], RiskSummary | None]:
+    ) -> tuple[
+        Sequence[IngestedOdds],
+        Sequence[SimulationResult],
+        Sequence[Opportunity],
+        RiskSummary | None,
+        Sequence[IngestedOdds],
+    ]:
         odds = list(self.feed.live_markets())
         simulations_fetcher = getattr(self.feed, "simulations", lambda: [])
         opportunities_fetcher = getattr(self.feed, "opportunities", lambda: [])
         risk_fetcher = getattr(self.feed, "risk", lambda: None)
+        history_fetcher = getattr(self.feed, "line_history", lambda: [])
         simulations = list(simulations_fetcher())
         opportunities = list(opportunities_fetcher())
         risk_summary = risk_fetcher()
-        return odds, simulations, opportunities, risk_summary
+        movement_history = list(history_fetcher())
+        return odds, simulations, opportunities, risk_summary, movement_history
+
+    def _refresh_controller(self) -> DashboardSnapshot:
+        odds, simulations, opportunities, risk_summary, movement_history = self._load_data()
+        return self.controller.refresh(
+            odds,
+            simulations,
+            opportunities,
+            movement_history,
+            risk_summary=risk_summary,
+        )

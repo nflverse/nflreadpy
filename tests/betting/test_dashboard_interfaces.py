@@ -149,7 +149,7 @@ def test_dashboard_panel_collapse(sample_quotes, sample_simulations, sample_oppo
 
 @pytest.mark.skipif(pl is None, reason="polars not installed")
 def test_live_market_table_structure(sample_quotes):
-    table = _live_market_table(sample_quotes)
+    table = _live_market_table(sample_quotes, stale_after=dt.timedelta(minutes=5))
     assert table.columns == [
         "event_id",
         "sportsbook",
@@ -159,6 +159,8 @@ def test_live_market_table_structure(sample_quotes):
         "side",
         "line",
         "american_odds",
+        "age",
+        "fresh",
         "observed_at",
     ]
     assert table.height == 3
@@ -295,6 +297,7 @@ class _FakeSidebar:
         self.headers: list[str] = []
         self.multiselect_calls: list[tuple[str, list[str], list[str]]] = []
         self.checkbox_calls: list[tuple[str, bool]] = []
+        self.slider_calls: list[tuple[str, object]] = []
 
     def header(self, text: str) -> None:
         self.headers.append(text)
@@ -305,6 +308,17 @@ class _FakeSidebar:
 
     def checkbox(self, label: str, value: bool = True) -> bool:
         self.checkbox_calls.append((label, value))
+        return value
+
+    def slider(
+        self,
+        label: str,
+        min_value=None,
+        max_value=None,
+        value=None,
+        step: int | None = None,
+    ):
+        self.slider_calls.append((label, value))
         return value
 
 

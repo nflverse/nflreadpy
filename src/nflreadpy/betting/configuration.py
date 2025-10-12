@@ -105,6 +105,8 @@ class AnalyticsConfig(BaseModel):
     risk_seed: int | None = None
     history_limit: int = 256
     movement_threshold: int = 30
+    movement_depth: int | None = None
+    stale_after_minutes: float = 10.0
     iterations: IterationConfig = Field(default_factory=IterationConfig)
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
 

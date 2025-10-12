@@ -12,7 +12,7 @@ import shlex
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-from .analytics import Opportunity
+from .analytics import Opportunity, line_movement_summary
 from .dashboard_core import (
     DEFAULT_SEARCH_TARGETS,
     DashboardContext,
@@ -24,10 +24,14 @@ from .dashboard_core import (
     DashboardSnapshot,
     RiskSummary,
     build_ladder_matrix,
+    build_movement_series,
+    format_age,
     is_half_scope,
     is_quarter_scope,
+    movement_key,
     normalize_scope,
     parse_filter_tokens,
+    render_sparkline,
 )
 from .ingestion import IngestedOdds
 from .models import SimulationResult
@@ -76,10 +80,14 @@ class Dashboard:
     def __init__(self) -> None:
         self.filters = DashboardFilters()
         self.search = DashboardSearchState()
+        self.movement_depth: int | None = 6
+        self.movement_threshold: int | None = 40
+        self.stale_after: dt.timedelta = dt.timedelta(minutes=10)
         self._panel_order = [
             "controls",
             "simulations",
             "quotes",
+            "movements",
             "opportunities",
             "risk",
             "ladders",
@@ -89,6 +97,7 @@ class Dashboard:
             "controls": DashboardPanelState("controls", "Controls"),
             "simulations": DashboardPanelState("simulations", "Simulations"),
             "quotes": DashboardPanelState("quotes", "Latest Quotes"),
+            "movements": DashboardPanelState("movements", "Line Movement"),
             "opportunities": DashboardPanelState("opportunities", "Opportunities"),
             "risk": DashboardPanelState("risk", "Risk Management"),
             "ladders": DashboardPanelState("ladders", "Line Ladders"),
@@ -205,12 +214,40 @@ class Dashboard:
         opportunities: Sequence[Opportunity],
         *,
         risk_summary: RiskSummary | None = None,
+        movement_history: Sequence[IngestedOdds] | None = None,
+        movement_depth: int | None = None,
+        movement_threshold: int | None = None,
+        stale_after: dt.timedelta | None = None,
     ) -> DashboardSnapshot:
         now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
         header = [f"NFL Terminal — {now}", "=" * 96]
         filtered_odds = [quote for quote in odds if self.filters.match_odds(quote)]
         filtered_sims = [result for result in simulations if self.filters.match_simulation(result)]
         filtered_opps = [opp for opp in opportunities if self.filters.match_opportunity(opp)]
+        filtered_history: Sequence[IngestedOdds] = tuple(
+            quote for quote in movement_history or () if self.filters.match_odds(quote)
+        )
+        effective_depth = movement_depth if movement_depth is not None else self.movement_depth
+        effective_threshold = (
+            movement_threshold if movement_threshold is not None else self.movement_threshold
+        )
+        series_points = None
+        if effective_depth is not None:
+            series_points = max(effective_depth * 4, 12)
+        movement_series = build_movement_series(filtered_history, max_points=series_points)
+        movement_summary = tuple(
+            line_movement_summary(
+                filtered_history,
+                depth=effective_depth,
+                alert_threshold=effective_threshold or 40,
+                alert_manager=None,
+            )
+        )
+        sparklines = {
+            key: render_sparkline([price for _, price in points])
+            for key, points in movement_series.items()
+        }
+        effective_stale_after = stale_after or self.stale_after
         search_hits = self._apply_search(filtered_odds, filtered_sims, filtered_opps)
         context = DashboardContext(
             filters=self.filters,
@@ -220,6 +257,12 @@ class Dashboard:
             opportunities=filtered_opps,
             search_results=search_hits,
             risk_summary=risk_summary,
+            movement_summary=movement_summary,
+            movement_series=movement_series,
+            movement_sparklines=sparklines,
+            movement_depth=effective_depth,
+            movement_threshold=effective_threshold,
+            stale_after=effective_stale_after,
         )
         panels: list[DashboardPanelView] = []
         for key in self._panel_order:
@@ -234,12 +277,20 @@ class Dashboard:
         opportunities: Sequence[Opportunity],
         *,
         risk_summary: RiskSummary | None = None,
+        movement_history: Sequence[IngestedOdds] | None = None,
+        movement_depth: int | None = None,
+        movement_threshold: int | None = None,
+        stale_after: dt.timedelta | None = None,
     ) -> str:
         snapshot = self.snapshot(
             odds,
             simulations,
             opportunities,
             risk_summary=risk_summary,
+            movement_history=movement_history,
+            movement_depth=movement_depth,
+            movement_threshold=movement_threshold,
+            stale_after=stale_after,
         )
         sections = ["\n".join(snapshot.header)]
         for view in snapshot.panels:
@@ -317,17 +368,51 @@ class Dashboard:
         odds = sorted(context.odds, key=lambda q: q.observed_at, reverse=True)
         if not odds:
             return "No stored odds quotes."
-        lines = ["Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Seen"]
+        lines = [
+            "Book     Market Group        Market        Scope  Selection             Side   Line   Odds   Age   Fresh  Spark"
+        ]
+        now = dt.datetime.now(dt.timezone.utc)
+        threshold = context.stale_after or self.stale_after
         for quote in odds[:20]:
             line_display = f"{quote.line:.1f}" if quote.line is not None else "-"
             side_display = quote.side or "-"
-            seen = quote.observed_at.strftime("%H:%M:%S")
+            age = format_age(now - quote.observed_at)
+            stale = (now - quote.observed_at) > threshold
+            freshness = "⚠️" if stale else "✓"
+            key = movement_key(quote)
+            spark = context.movement_sparklines.get(key, "")
+            if len(spark) > 12:
+                spark = spark[-12:]
             lines.append(
                 f"{quote.sportsbook:<8}{quote.book_market_group:<18}{quote.market:<13}"
                 f"{quote.scope:<6}{quote.team_or_player:<20}{side_display:<6}{line_display:>6}"
-                f"{quote.american_odds:>7}{seen:>7}"
+                f"{quote.american_odds:>7}{age:>7}{freshness:^7}{spark:<12}"
             )
         return "\n".join(lines)  # <- outdented
+
+    def _render_movements(self, context: DashboardContext) -> str:
+        movements = context.movement_summary
+        if not movements:
+            return "No line movement history available."
+        lines = [
+            "Event/Market/Selection              Δ    Open→Now    Sparkline",
+        ]
+        for movement in movements:
+            event_id, market, scope, selection, side, line_value = movement.key
+            label = f"{event_id} {market} {selection}"
+            if side:
+                label += f" {side}"
+            if line_value is not None:
+                label += f" {line_value:+.1f}"
+            label += f" ({scope})"
+            spark = context.movement_sparklines.get(movement.key, "")
+            if len(spark) > 16:
+                spark = spark[-16:]
+            lines.append(
+                f"{label:<36}{movement.delta:+5d}"
+                f"  {movement.opening_price:>5}→{movement.latest_price:<5}  {spark}"
+            )
+        return "\n".join(lines)
 
     def _render_opportunities(self, context: DashboardContext) -> str:
         opportunities = context.opportunities
@@ -570,6 +655,10 @@ class TerminalDashboardSession:
         self._hotkey_map: dict[str, DashboardHotkey] = {
             binding.key: binding for binding in self.dashboard.hotkey_bindings()
         }
+        self._movement_history: Sequence[IngestedOdds] = ()
+        self._movement_depth: int | None = self.dashboard.movement_depth
+        self._movement_threshold: int | None = self.dashboard.movement_threshold
+        self._stale_after: dt.timedelta | None = self.dashboard.stale_after
 
     @property
     def panels(self) -> Sequence[str]:
@@ -581,16 +670,29 @@ class TerminalDashboardSession:
         odds: Sequence[IngestedOdds],
         simulations: Sequence[SimulationResult],
         opportunities: Sequence[Opportunity],
+        movement_history: Sequence[IngestedOdds] | None = None,
+        *,
+        movement_depth: int | None = None,
+        movement_threshold: int | None = None,
+        stale_after: dt.timedelta | None = None,
     ) -> str:
+        if movement_history is not None:
+            self._movement_history = movement_history
+        if movement_depth is not None:
+            self._movement_depth = movement_depth
+        if movement_threshold is not None:
+            self._movement_threshold = movement_threshold
+        if stale_after is not None:
+            self._stale_after = stale_after
         parts = shlex.split(command)
         if not parts:
-            return self.dashboard.render(odds, simulations, opportunities)
+            return self._render(odds, simulations, opportunities)
         action = parts[0].lower()
         args = parts[1:]
         if action in {"help", "?"}:
             return self._help()
         if action == "show":
-            return self.dashboard.render(odds, simulations, opportunities)
+            return self._render(odds, simulations, opportunities)
         if action == "reset":
             self.dashboard.reset_filters()
             self.dashboard.reset_search()
@@ -615,7 +717,13 @@ class TerminalDashboardSession:
         if action == "hotkeys":
             return self._hotkey_help()
         if action == "hotkey":
-            return self._hotkey(args, odds, simulations, opportunities)
+            return self._hotkey(
+                args,
+                odds,
+                simulations,
+                opportunities,
+                movement_history,
+            )
         return f"Unknown command: {action}. Type 'help' for available commands."
 
     # ------------------------------------------------------------------
@@ -726,6 +834,7 @@ class TerminalDashboardSession:
         odds: Sequence[IngestedOdds],
         simulations: Sequence[SimulationResult],
         opportunities: Sequence[Opportunity],
+        movement_history: Sequence[IngestedOdds] | None,
     ) -> str:
         if not args:
             return self._hotkey_help()
@@ -736,7 +845,16 @@ class TerminalDashboardSession:
         command = binding.command
         if len(args) > 1:
             command = " ".join((command, *args[1:]))
-        return self.handle(command, odds, simulations, opportunities)
+        return self.handle(
+            command,
+            odds,
+            simulations,
+            opportunities,
+            movement_history if movement_history is not None else self._movement_history,
+            movement_depth=self._movement_depth,
+            movement_threshold=self._movement_threshold,
+            stale_after=self._stale_after,
+        )
 
     def _hotkey_help(self) -> str:
         bindings = sorted(self._hotkey_map.values(), key=lambda item: item.key)
@@ -745,4 +863,20 @@ class TerminalDashboardSession:
             lines.append(f"  {binding.key} -> {binding.command} — {binding.description}")
         lines.append("Use 'hotkey <key>' (optionally followed by arguments) to invoke a binding.")
         return "\n".join(lines)
+
+    def _render(
+        self,
+        odds: Sequence[IngestedOdds],
+        simulations: Sequence[SimulationResult],
+        opportunities: Sequence[Opportunity],
+    ) -> str:
+        return self.dashboard.render(
+            odds,
+            simulations,
+            opportunities,
+            movement_history=self._movement_history,
+            movement_depth=self._movement_depth,
+            movement_threshold=self._movement_threshold,
+            stale_after=self._stale_after,
+        )
 

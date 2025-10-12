@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import datetime as dt
 import logging
-from collections import defaultdict
+import time
 from typing import Dict, List, Mapping, Sequence, Tuple
 
 from .alerts import AlertManager, get_alert_manager
-from .compliance import ComplianceEngine, ResponsibleGamingControls
+from .compliance import ResponsibleGamingControls
 from .models import (
     PlayerPropForecaster,
     ProbabilityTriple,
+    SimulationBenchmark,
     SimulationResult,
 )
 from .scrapers.base import OddsQuote, best_prices_by_selection
@@ -67,47 +69,82 @@ class EdgeDetector:
         value_threshold: float = 0.02,
         player_model: PlayerPropForecaster | None = None,
         alert_manager: AlertManager | None = None,
+        backend: str = "auto",
+        correlation_penalty: float = 0.0,
     ) -> None:
         self.value_threshold = value_threshold
         self.player_model = player_model or PlayerPropForecaster()
         self.alert_manager = alert_manager or get_alert_manager()
+        self.correlation_penalty = correlation_penalty
+        self._backend = "python"
+        self._np = None
+        if backend in {"auto", "numpy"}:
+            try:  # pragma: no cover - optional dependency
+                import numpy as np  # type: ignore
+
+                self._np = np
+                self._backend = "numpy"
+            except Exception:  # pragma: no cover - optional dependency
+                self._np = None
+                self._backend = "python"
+        elif backend == "numpy":
+            try:
+                import numpy as np  # type: ignore
+
+                self._np = np
+                self._backend = "numpy"
+            except Exception:  # pragma: no cover
+                logger.warning("NumPy backend requested but unavailable; falling back to python")
+                self._backend = "python"
+        else:
+            self._backend = "python"
 
     def detect(
         self, odds: Sequence[OddsQuote], simulations: Sequence[SimulationResult]
     ) -> List[Opportunity]:
         by_event = {result.event_id: result for result in simulations}
         opportunities: List[Opportunity] = []
+        grouped: Dict[str, List[OddsQuote]] = collections.defaultdict(list)
         for quote in odds:
-            result = by_event.get(quote.event_id)
-            probability = self._probability_for_quote(quote, result)
-            if probability is None:
+            grouped[quote.event_id].append(quote)
+        for event_id, event_quotes in grouped.items():
+            result = by_event.get(event_id)
+            evaluations: List[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]] = []
+            for quote in event_quotes:
+                probability = self._probability_for_quote(quote, result)
+                if probability is None:
+                    continue
+                evaluations.append((quote, probability, result))
+            if not evaluations:
                 continue
-            implied = quote.implied_probability()
-            b = quote.decimal_multiplier()
-            expected_value = probability.win * b - probability.loss
-            if expected_value < self.value_threshold:
-                continue
-            kelly = KellyCriterion.fraction(probability.win, probability.loss, quote.american_odds)
-            opportunities.append(
-                Opportunity(
-                    event_id=quote.event_id,
-                    sportsbook=quote.sportsbook,
-                    book_market_group=quote.book_market_group,
-                    market=quote.market,
-                    scope=quote.scope,
-                    entity_type=quote.entity_type,
-                    team_or_player=quote.team_or_player,
-                    side=quote.side,
-                    line=quote.line,
-                    american_odds=quote.american_odds,
-                    model_probability=probability.win,
-                    push_probability=probability.push,
-                    implied_probability=implied,
-                    expected_value=expected_value,
-                    kelly_fraction=kelly,
-                    extra=dict(quote.extra or {}),
+            adjusted_probabilities, expected_values = self._evaluate_probabilities(evaluations)
+            for (quote, _base_probability, _sim_result), adj_probability, expected_value in zip(
+                evaluations, adjusted_probabilities, expected_values
+            ):
+                if expected_value < self.value_threshold:
+                    continue
+                implied = quote.implied_probability()
+                kelly = KellyCriterion.fraction(adj_probability.win, adj_probability.loss, quote.american_odds)
+                opportunities.append(
+                    Opportunity(
+                        event_id=quote.event_id,
+                        sportsbook=quote.sportsbook,
+                        book_market_group=quote.book_market_group,
+                        market=quote.market,
+                        scope=quote.scope,
+                        entity_type=quote.entity_type,
+                        team_or_player=quote.team_or_player,
+                        side=quote.side,
+                        line=quote.line,
+                        american_odds=quote.american_odds,
+                        model_probability=adj_probability.win,
+                        push_probability=adj_probability.push,
+                        implied_probability=implied,
+                        expected_value=expected_value,
+                        kelly_fraction=kelly,
+                        extra=dict(quote.extra or {}),
+                    )
                 )
-            )
         logger.info("Detected %d potential edges", len(opportunities))
         if self.alert_manager:
             self.alert_manager.notify_edges(
@@ -215,6 +252,109 @@ class EdgeDetector:
             return ProbabilityTriple(max(0.0, min(1.0, win)))
         return None
 
+    def _evaluate_probabilities(
+        self,
+        evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
+    ) -> Tuple[List[ProbabilityTriple], List[float]]:
+        if self._backend == "numpy" and self._np is not None and len(evaluations) > 1:
+            return self._evaluate_probabilities_numpy(evaluations)
+        return self._evaluate_probabilities_python(evaluations)
+
+    def _evaluate_probabilities_python(
+        self,
+        evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
+    ) -> Tuple[List[ProbabilityTriple], List[float]]:
+        adjusted: List[ProbabilityTriple] = []
+        expected: List[float] = []
+        for quote, probability, result in evaluations:
+            adj_probability = self._apply_correlation(probability, quote, result)
+            adjusted.append(adj_probability)
+            multiplier = quote.decimal_multiplier()
+            expected.append(adj_probability.win * multiplier - adj_probability.loss)
+        return adjusted, expected
+
+    def _evaluate_probabilities_numpy(
+        self,
+        evaluations: Sequence[Tuple[OddsQuote, ProbabilityTriple, SimulationResult | None]],
+    ) -> Tuple[List[ProbabilityTriple], List[float]]:
+        np = self._np
+        assert np is not None
+        wins = np.array([prob.win for _, prob, _ in evaluations], dtype=float)
+        pushes = np.array([prob.push for _, prob, _ in evaluations], dtype=float)
+        multipliers = np.array([quote.decimal_multiplier() for quote, _, _ in evaluations], dtype=float)
+        adjustments = np.array(
+            [self._correlation_factor(quote, prob, result) for quote, prob, result in evaluations],
+            dtype=float,
+        )
+        adjusted_wins = wins + adjustments
+        adjusted_wins = np.clip(adjusted_wins, 0.0, 1.0 - pushes)
+        losses = 1.0 - adjusted_wins - pushes
+        expected = adjusted_wins * multipliers - losses
+        adjusted = [
+            ProbabilityTriple(float(win), float(push))
+            for win, push in zip(adjusted_wins.tolist(), pushes.tolist())
+        ]
+        return adjusted, expected.tolist()
+
+    def _apply_correlation(
+        self,
+        probability: ProbabilityTriple,
+        quote: OddsQuote,
+        result: SimulationResult | None,
+    ) -> ProbabilityTriple:
+        adjustment = self._correlation_factor(quote, probability, result)
+        if adjustment == 0.0:
+            return probability
+        win = max(0.0, min(1.0 - probability.push, probability.win + adjustment))
+        return ProbabilityTriple(win, probability.push)
+
+    def _correlation_factor(
+        self,
+        quote: OddsQuote,
+        probability: ProbabilityTriple,
+        result: SimulationResult | None,
+    ) -> float:
+        del probability
+        if self.correlation_penalty <= 0.0 or result is None:
+            return 0.0
+        corr = 0.0
+        if quote.extra and "correlation_key" in quote.extra:
+            key = (str(quote.extra["correlation_key"]), "")
+            reference = (str(quote.extra.get("correlates_with", "total")), "")
+            corr = result.correlation(key, reference)
+        elif quote.entity_type == "team" and quote.market.startswith("team_total"):
+            base = "home_score" if quote.team_or_player == result.home_team else "away_score"
+            corr = result.correlation((base, ""), ("total", ""))
+        elif quote.entity_type in {"total", "game_total"}:
+            corr = result.correlation(("total", ""), ("total", ""))
+        else:
+            corr = 0.0
+        if corr == 0.0:
+            return 0.0
+        skew = corr * self.correlation_penalty
+        if quote.side in {"under", "no"}:
+            skew *= -1.0
+        return skew
+
+    def benchmark(
+        self,
+        odds: Sequence[OddsQuote],
+        simulations: Sequence[SimulationResult],
+        repeats: int = 5,
+    ) -> SimulationBenchmark:
+        start = time.perf_counter()
+        evaluations = 0
+        for _ in range(repeats):
+            evaluations += len(self.detect(odds, simulations))
+        elapsed = max(1e-6, time.perf_counter() - start)
+        per_minute = evaluations / (elapsed / 60.0)
+        if per_minute < 1_000_000:
+            logger.debug(
+                "Benchmark throughput %.0f edges/minute below million threshold; consider numpy backend",
+                per_minute,
+            )
+        return SimulationBenchmark(backend=self._backend, simulations_run=evaluations, elapsed_seconds=elapsed)
+
 
 def _leader_score(mean: float, stdev: float) -> float:
     stdev = max(1e-6, stdev)
@@ -253,7 +393,7 @@ class LineMovementAnalyzer:
         grouped: Dict[
             Tuple[str, str, str, str, str | None, float | None],
             List["IngestedOdds"],
-        ] = defaultdict(list)
+        ] = collections.defaultdict(list)
         for row in self.history:
             key = (
                 row.event_id,
@@ -317,7 +457,7 @@ class PortfolioManager:
         self.max_risk_per_bet = max_risk_per_bet
         self.max_event_exposure = max_event_exposure
         self.positions: List[PortfolioPosition] = []
-        self._exposure: Dict[Tuple[str, str], float] = defaultdict(float)
+        self._exposure: Dict[Tuple[str, str], float] = collections.defaultdict(float)
         self._compliance_engine = compliance_engine
         self._controls = responsible_gaming or ResponsibleGamingControls()
         self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")

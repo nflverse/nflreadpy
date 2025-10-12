@@ -31,15 +31,20 @@ from .compliance import (
     ComplianceEngine,
     ResponsibleGamingControls,
 )
-from .dashboard import Dashboard
+from .dashboard import Dashboard, TerminalDashboardSession
 from .ingestion import OddsIngestionService
 from .models import (
     GameSimulationConfig,
+    GLMPlayerModel,
+    HistoricalGameRecord,
     MonteCarloEngine,
+    NGBoostPlayerModel,
     PlayerPropForecaster,
     PlayerProjection,
     ProbabilityTriple,
+    SimulationBenchmark,
     SimulationResult,
+    XGBoostPlayerModel,
 )
 from .normalization import NameNormalizer
 from .quantum import QuantumPortfolioOptimizer
@@ -55,15 +60,19 @@ from .scrapers.mock import MockSportsbookScraper
 __all__ = [
     "AlertManager",
     "Dashboard",
+    "TerminalDashboardSession",
     "ComplianceConfig",
     "ComplianceEngine",
     "EdgeDetector",
     "GameSimulationConfig",
+    "GLMPlayerModel",
     "EmailAlertSink",
+    "HistoricalGameRecord",
     "KellyCriterion",
     "LineMovementAnalyzer",
     "MockSportsbookScraper",
     "MonteCarloEngine",
+    "NGBoostPlayerModel",
     "MultiScraperCoordinator",
     "NameNormalizer",
     "OddsIngestionService",
@@ -75,10 +84,12 @@ __all__ = [
     "QuantumPortfolioOptimizer",
     "ProbabilityTriple",
     "SMSAlertSink",
+    "SimulationBenchmark",
     "Scheduler",
     "SimulationResult",
     "SportsbookScraper",
     "SlackAlertSink",
+    "XGBoostPlayerModel",
     "best_prices_by_selection",
     "get_alert_manager",
     "consolidate_best_prices",

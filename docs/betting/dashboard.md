@@ -51,6 +51,9 @@ The interpreter understands the following commands:
 - `search <query> [--case] [--in quotes,opportunities,simulations]` — apply a
   search term across one or more data sources.
 - `clear search` — remove the active search query.
+- `scope <preset>` — quickly toggle between the built-in scope presets
+  (`all`, `game`, or `main` which keeps first/second half markets but hides
+  quarters).
 - `order controls,quotes,...` — customise the panel ordering.
 - `reset` — clear filters and the search state.
 
@@ -72,6 +75,8 @@ The curses UI supports the following keys:
 - `/` — open the search prompt (the query is shared with the command
   interpreter and the Streamlit dashboard).
 - `Q` / `H` — toggle quarter and half scopes respectively.
+- `g` / `m` / `a` — jump to the `game`, `main`, or `all` scope presets without
+  visiting the filter prompt.
 - `c` — reset filters to their defaults.
 - `n` — clear the search query.
 - `r` — force a data refresh immediately.
@@ -80,7 +85,10 @@ The curses UI supports the following keys:
 
 The rendered output includes a dedicated **Search Results** panel that
 summarises matches across the selected datasets, making it straightforward to
-locate specific players, events, or markets without leaving the terminal.
+locate specific players, events, or markets without leaving the terminal.  The
+**Line Ladders** panel now highlights the most favourable scope for each price
+level with an asterisk and an explicit `Best` column, helping traders quickly
+identify which segment of the market is offering the strongest price.
 
 ## Streamlit dashboard
 
@@ -92,7 +100,9 @@ page renders:
 - a sortable table of live markets filtered using the same controls as the
   terminal dashboard;
 - a model opportunity table when edges are detected;
-- Vega-Lite charts for line movement and probability calibration; and
+- Vega-Lite charts for line movement and probability calibration;
+- ladder matrices that mirror the terminal layout, including best-scope
+  annotations; and
 - portfolio analytics summarising stake, expected value, Kelly sizing, and
   realised PnL.
 

@@ -16,8 +16,10 @@ from ..dashboard_core import (
     is_half_scope,
     is_quarter_scope,
     normalize_scope,
+    build_ladder_matrix,
 )
 from ..ingestion import IngestedOdds
+from ..scrapers.base import american_to_decimal
 
 
 @dataclasses.dataclass(slots=True)
@@ -204,6 +206,17 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
             },
             use_container_width=True,
         )
+
+    st.header("Line Ladders")
+    ladder_matrix = build_ladder_matrix(filtered_quotes)
+    if not ladder_matrix:
+        st.info("No ladder matrices available for the selected filters.")
+    else:
+        for key, ladder in sorted(ladder_matrix.items()):
+            event_id, market, selection = key
+            st.subheader(f"{event_id} — {market} — {selection}")
+            ladder_frame = _ladder_frame(ladder)
+            st.dataframe(_as_streamlit_data(ladder_frame), use_container_width=True)
 
     st.header("Calibration")
     calibration_points = [
@@ -442,6 +455,37 @@ def _lazy_polars():  # type: ignore[no-untyped-def]
             "polars is required for the betting dashboards. Install with 'uv add polars'."
         ) from exc
     return pl
+
+
+def _ladder_frame(ladder: dict[str, dict[float, int]]) -> "pl.DataFrame":
+    pl = _lazy_polars()
+    if not ladder:
+        return pl.DataFrame(schema={"line": pl.Float64})
+    scopes = sorted(ladder)
+    lines = sorted({line for entries in ladder.values() for line in entries})
+    records: list[dict[str, object]] = []
+    for line in lines:
+        row: dict[str, object] = {"line": line}
+        best_scope = _best_scope_for_line(ladder, line)
+        for scope in scopes:
+            row[scope] = ladder[scope].get(line)
+        row["best_scope"] = best_scope
+        records.append(row)
+    return pl.DataFrame(records)
+
+
+def _best_scope_for_line(ladder: dict[str, dict[float, int]], line: float) -> str | None:
+    best_scope: str | None = None
+    best_price: float | None = None
+    for scope, entries in ladder.items():
+        odds_value = entries.get(line)
+        if odds_value is None:
+            continue
+        decimal = american_to_decimal(odds_value)
+        if best_price is None or decimal > best_price:
+            best_price = decimal
+            best_scope = scope
+    return best_scope
 
 
 def _line_point_matches(point: LineMovementPoint, filters: DashboardFilters) -> bool:

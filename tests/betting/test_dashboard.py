@@ -125,6 +125,55 @@ def test_ladder_matrix(sample_quotes: list[IngestedOdds]) -> None:
     assert matrix["1sthalf"][-2.5] == -105
 
 
+def test_dashboard_scope_presets() -> None:
+    dashboard = Dashboard()
+    filters = dashboard.apply_scope_preset("game")
+    assert filters.include_quarters is False
+    assert filters.include_halves is False
+    assert filters.scopes == frozenset({"game"})
+    with pytest.raises(KeyError):
+        dashboard.apply_scope_preset("invalid")
+
+
+def test_ladder_panel_marks_best_scope() -> None:
+    observed = dt.datetime(2024, 1, 21, tzinfo=dt.timezone.utc)
+    quotes = [
+        IngestedOdds(
+            event_id="KC@BUF",
+            sportsbook="FanDuel",
+            book_market_group="spread",
+            market="spread",
+            scope="1st half",
+            entity_type="team",
+            team_or_player="Kansas City Chiefs",
+            side="home",
+            line=-2.5,
+            american_odds=-105,
+            observed_at=observed,
+            extra={},
+        ),
+        IngestedOdds(
+            event_id="KC@BUF",
+            sportsbook="DraftKings",
+            book_market_group="spread",
+            market="spread",
+            scope="game",
+            entity_type="team",
+            team_or_player="Kansas City Chiefs",
+            side="home",
+            line=-2.5,
+            american_odds=-102,
+            observed_at=observed,
+            extra={},
+        ),
+    ]
+    output = Dashboard().render(quotes, [], [])
+    assert "Line Ladders" in output
+    assert "Best" in output
+    assert "-105*" in output
+    assert " -2.5      -105*    -102  game" in output
+
+
 def test_dashboard_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     sample_quotes,
@@ -173,6 +222,11 @@ def test_terminal_session_commands(sample_quotes, sample_simulation, sample_oppo
     assert "Kansas City Chiefs" in rendered
     cleared = session.handle("clear search", sample_quotes, sample_simulation, sample_opportunities)
     assert cleared == "Search cleared."
+    scope_message = session.handle("scope game", sample_quotes, sample_simulation, sample_opportunities)
+    assert scope_message == "Scope preset 'game' applied."
+    assert session.dashboard.filters.include_quarters is False
+    assert session.dashboard.filters.include_halves is False
+    assert session.dashboard.filters.scopes == frozenset({"game"})
 
 
 def test_keyboard_controller(sample_quotes, sample_simulation, sample_opportunities, sample_risk_summary) -> None:
@@ -203,3 +257,7 @@ def test_keyboard_controller(sample_quotes, sample_simulation, sample_opportunit
     assert controller.dashboard.search.query == "Chiefs"
     controller.clear_search()
     assert not controller.dashboard.search.query
+    controller.apply_scope_preset("all")
+    assert controller.dashboard.filters.include_quarters is True
+    assert controller.dashboard.filters.include_halves is True
+    assert controller.dashboard.filters.scopes is None

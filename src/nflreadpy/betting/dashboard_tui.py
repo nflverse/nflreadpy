@@ -104,6 +104,14 @@ class DashboardKeyboardController:
         self.dashboard.reset_search()
         self.status = "Search cleared."
 
+    def apply_scope_preset(self, preset: str) -> None:
+        try:
+            self.dashboard.apply_scope_preset(preset)
+        except KeyError as exc:  # pragma: no cover - defensive guard
+            self.status = str(exc)
+            return
+        self.status = f"Scope preset '{preset}' applied."
+
     def refresh(
         self,
         odds: Sequence[IngestedOdds],
@@ -197,7 +205,7 @@ class _CursesDashboardApp:
             row += 1
         help_line = (
             "Tab⇆ navigate · Space toggle · f filter · / search · Q quarters · H halves · "
-            "c reset filters · n clear search · r refresh · q quit"
+            "g game scope · m main scope · a all scopes · c reset filters · n clear search · r refresh · q quit"
         )
         screen.addnstr(max_y - 2, 0, help_line[: max_x - 1], max_x - 1, curses.A_DIM)
         status = self.controller.status
@@ -234,6 +242,18 @@ class _CursesDashboardApp:
             self.controller.toggle_halves()
             self._needs_refresh = True
             return False
+        if key in (ord("g"),):
+            self.controller.apply_scope_preset("game")
+            self._needs_refresh = True
+            return False
+        if key in (ord("m"),):
+            self.controller.apply_scope_preset("main")
+            self._needs_refresh = True
+            return False
+        if key in (ord("a"),):
+            self.controller.apply_scope_preset("all")
+            self._needs_refresh = True
+            return False
         if key in (ord("f"),):
             expression = self._prompt(screen, "Filter expression: ")
             if expression is not None:
@@ -259,7 +279,7 @@ class _CursesDashboardApp:
         if key in (ord("?"),):
             self.controller.status = (
                 "Keys: Tab navigate | Shift+Tab back | Space toggle | f filter | / search | "
-                "Q quarters | H halves | c reset filters | n clear search | r refresh | q quit"
+                "Q quarters | H halves | g game scope | m main scope | a all scopes | c reset filters | n clear search | r refresh | q quit"
             )
             self._draw(screen, self.controller.last_snapshot)  # type: ignore[arg-type]
             return False

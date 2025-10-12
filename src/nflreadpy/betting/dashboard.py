@@ -29,6 +29,7 @@ from .dashboard_core import (
 )
 from .ingestion import IngestedOdds
 from .models import SimulationResult
+from .scrapers.base import american_to_decimal
 
 
 # Backwards compatibility aliases for historical private imports
@@ -37,6 +38,25 @@ _parse_filter_tokens = parse_filter_tokens
 _normalize_scope = normalize_scope
 _is_quarter_scope = is_quarter_scope
 _is_half_scope = is_half_scope
+
+
+_SCOPE_PRESETS: dict[str, dict[str, object]] = {
+    "all": {
+        "include_quarters": True,
+        "include_halves": True,
+        "scopes": None,
+    },
+    "game": {
+        "include_quarters": False,
+        "include_halves": False,
+        "scopes": ("game",),
+    },
+    "main": {
+        "include_quarters": False,
+        "include_halves": True,
+        "scopes": ("game", "1st half", "2nd half"),
+    },
+}
 
 
 class Dashboard:
@@ -122,6 +142,23 @@ class Dashboard:
             missing_keys = ", ".join(sorted(missing))
             raise KeyError(f"Unknown panels in order: {missing_keys}")
         self._panel_order = list(order)
+
+    def scope_presets(self) -> tuple[str, ...]:
+        """Return the available scope presets recognised by the dashboard."""
+
+        return tuple(sorted(_SCOPE_PRESETS))
+
+    def apply_scope_preset(self, preset: str) -> DashboardFilters:
+        """Apply a named scope preset and return the updated filters."""
+
+        key = preset.lower()
+        if key not in _SCOPE_PRESETS:
+            valid = ", ".join(self.scope_presets())
+            raise KeyError(f"Unknown scope preset '{preset}'. Available presets: {valid}")
+        updates = dict(_SCOPE_PRESETS[key])
+        scopes = updates.pop("scopes")
+        self.filters = self.filters.update(scopes=scopes, **updates)
+        return self.filters
 
     # ------------------------------------------------------------------
     # Rendering
@@ -347,20 +384,39 @@ class Dashboard:
         for (event_id, market, selection), ladder in ladders.items():
             scopes = sorted(ladder.keys())
             sections.append(f"{event_id} · {market} · {selection}")
-            header = "Line  " + "".join(f"{scope:>9}" for scope in scopes)
+            header = "Line  " + "".join(f"{scope:>9}" for scope in scopes) + "  Best"
             sections.append(header)
             lines = sorted({line for entries in ladder.values() for line in entries})
             for line_value in lines:
                 row = f"{line_value:>5.1f} "
+                best_scope = self._best_scope_for_line(ladder, line_value)
                 for scope in scopes:
                     odds_value = ladder[scope].get(line_value)
                     if odds_value is None:
                         row += " " * 9
-                    else:
-                        row += f"{odds_value:>9}"
+                        continue
+                    marker = "*" if scope == best_scope else " "
+                    row += f"{marker}{odds_value:>8}"
+                row += f"  {best_scope or '-'}"
                 sections.append(row.rstrip())
             sections.append("")
         return "\n".join(section for section in sections).strip()
+
+    @staticmethod
+    def _best_scope_for_line(
+        ladder: dict[str, dict[float, int]], line_value: float
+    ) -> str | None:
+        best_scope: str | None = None
+        best_price: float | None = None
+        for scope, entries in ladder.items():
+            odds_value = entries.get(line_value)
+            if odds_value is None:
+                continue
+            decimal = american_to_decimal(odds_value)
+            if best_price is None or decimal > best_price:
+                best_price = decimal
+                best_scope = scope
+        return best_scope
 
     def _render_search(self, context: DashboardContext) -> str:
         query = context.search.query
@@ -490,6 +546,8 @@ class TerminalDashboardSession:
             return self._order(args)
         if action == "panel":
             return self._panel(args)
+        if action == "scope":
+            return self._scope(args)
         return f"Unknown command: {action}. Type 'help' for available commands."
 
     # ------------------------------------------------------------------
@@ -503,6 +561,7 @@ class TerminalDashboardSession:
             "  toggle quarters|halves|panel KEY Toggle quarters/halves or a panel\n"
             "  search <query> [--case] [--in targets]   Apply text search\n"
             "  clear search                   Remove search query\n"
+            "  scope <preset>                  Apply scope preset (all, game, main)\n"
             "  order panel1,panel2,...        Reorder panels\n"
             "  panels                          List available panels\n"
             "  reset                           Reset filters and search"
@@ -579,4 +638,15 @@ class TerminalDashboardSession:
         if not panel:
             return f"Unknown panel '{key}'."
         return f"Panel '{panel.title}' is {'collapsed' if panel.collapsed else 'expanded'}."
+
+    def _scope(self, args: Sequence[str]) -> str:
+        if not args:
+            presets = ", ".join(self.dashboard.scope_presets())
+            return f"Usage: scope <preset>. Available presets: {presets}"
+        preset = args[0]
+        try:
+            self.dashboard.apply_scope_preset(preset)
+        except KeyError as exc:
+            return str(exc)
+        return f"Scope preset '{preset}' applied."
 

@@ -7,6 +7,7 @@ from .app import (
     PortfolioPosition,
     run_dashboard,
 )
+from .api import create_api_app
 
 __all__ = [
     "CalibrationPoint",
@@ -14,4 +15,5 @@ __all__ = [
     "LineMovementPoint",
     "PortfolioPosition",
     "run_dashboard",
+    "create_api_app",
 ]

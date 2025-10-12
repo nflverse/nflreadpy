@@ -16,6 +16,7 @@ import dataclasses
 import datetime as dt
 import logging
 from abc import ABC, abstractmethod
+from fractions import Fraction
 from typing import (
     Any,
     Dict,
@@ -65,6 +66,87 @@ def normalise_american_odds(value: int | float | str) -> int:
     return int(f"+{stripped}")
 
 
+def american_to_decimal(value: int | float | str) -> float:
+    """Convert an American price into European decimal odds."""
+
+    price = normalise_american_odds(value)
+    if price == 0:
+        raise ValueError("American odds cannot be zero")
+    if price > 0:
+        return 1.0 + price / 100.0
+    return 1.0 + 100.0 / -price
+
+
+def american_to_profit_multiplier(value: int | float | str) -> float:
+    """Return the net profit multiplier for a one-unit stake at American odds."""
+
+    price = normalise_american_odds(value)
+    if price == 0:
+        raise ValueError("American odds cannot be zero")
+    if price > 0:
+        return price / 100.0
+    return 100.0 / -price
+
+
+def decimal_to_american(decimal_odds: float) -> int:
+    """Convert decimal odds to their American representation."""
+
+    if decimal_odds <= 1.0:
+        raise ValueError("Decimal odds must exceed 1.0")
+    if decimal_odds >= 2.0:
+        return int(round((decimal_odds - 1.0) * 100.0))
+    return int(round(-100.0 / (decimal_odds - 1.0)))
+
+
+def fractional_to_decimal(numerator: int, denominator: int) -> float:
+    """Convert fractional odds to decimal form."""
+
+    if denominator == 0:
+        raise ValueError("Fractional denominator cannot be zero")
+    if numerator < 0 or denominator < 0:
+        raise ValueError("Fractional odds must be non-negative")
+    fraction = Fraction(numerator, denominator)
+    return 1.0 + float(fraction)
+
+
+def decimal_to_fractional(decimal_odds: float, *, max_denominator: int = 512) -> Tuple[int, int]:
+    """Convert decimal odds to a simplified fractional representation."""
+
+    if decimal_odds <= 1.0:
+        raise ValueError("Decimal odds must exceed 1.0")
+    fraction = Fraction(decimal_odds - 1.0).limit_denominator(max_denominator)
+    return fraction.numerator, fraction.denominator
+
+
+def american_to_fractional(value: int | float | str, *, max_denominator: int = 512) -> Tuple[int, int]:
+    """Convert American odds to fractional form."""
+
+    decimal = american_to_decimal(value)
+    return decimal_to_fractional(decimal, max_denominator=max_denominator)
+
+
+def fractional_to_american(numerator: int, denominator: int) -> int:
+    """Convert fractional odds to American format."""
+
+    decimal = fractional_to_decimal(numerator, denominator)
+    return decimal_to_american(decimal)
+
+
+def implied_probability_from_decimal(decimal_odds: float) -> float:
+    """Return the bookmaker's implied win probability from decimal odds."""
+
+    if decimal_odds <= 1.0:
+        raise ValueError("Decimal odds must exceed 1.0")
+    return 1.0 / decimal_odds
+
+
+def implied_probability_from_fractional(numerator: int, denominator: int) -> float:
+    """Return the implied probability from fractional odds."""
+
+    decimal = fractional_to_decimal(numerator, denominator)
+    return implied_probability_from_decimal(decimal)
+
+
 @dataclasses.dataclass(slots=True)
 class OddsQuote:
     """Represents a sportsbook quote in the canonical prompt-prescribed shape."""
@@ -87,20 +169,12 @@ class OddsQuote:
     def implied_probability(self) -> float:
         """Convert American odds into decimal implied probability."""
 
-        price = self.american_odds
-        if price == 0:
-            raise ValueError("American odds cannot be zero")
-        if price > 0:
-            return 100.0 / (price + 100.0)
-        return -price / (-price + 100.0)
+        return implied_probability_from_decimal(american_to_decimal(self.american_odds))
 
     def decimal_multiplier(self) -> float:
         """Return the net profit multiplier for a one-unit stake."""
 
-        price = self.american_odds
-        if price > 0:
-            return price / 100.0
-        return 100.0 / -price
+        return american_to_profit_multiplier(self.american_odds)
 
 
 class SportsbookScraper(ABC):

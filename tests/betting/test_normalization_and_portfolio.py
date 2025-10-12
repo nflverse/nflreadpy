@@ -7,9 +7,22 @@ from nflreadpy.betting import (
     PortfolioManager,
     QuantumPortfolioOptimizer,
 )
-from nflreadpy.betting.analytics import Opportunity
+from nflreadpy.betting.analytics import KellyCriterion, Opportunity
 from nflreadpy.betting.ingestion import IngestedOdds
-from nflreadpy.betting.scrapers.base import MultiScraperCoordinator, OddsQuote, StaticScraper
+import pytest
+
+from nflreadpy.betting.scrapers.base import (
+    MultiScraperCoordinator,
+    OddsQuote,
+    StaticScraper,
+    american_to_decimal,
+    american_to_fractional,
+    decimal_to_american,
+    fractional_to_american,
+    fractional_to_decimal,
+    implied_probability_from_decimal,
+    implied_probability_from_fractional,
+)
 
 
 def test_name_normalizer_applies_aliases() -> None:
@@ -76,6 +89,60 @@ def test_portfolio_manager_limits_event_exposure() -> None:
     assert second is None
 
 
+def test_odds_conversion_helpers_roundtrip() -> None:
+    decimal = american_to_decimal(+150)
+    assert decimal == pytest.approx(2.5)
+    assert decimal_to_american(decimal) == 150
+    frac = american_to_fractional(-120)
+    assert fractional_to_decimal(*frac) == pytest.approx(1.0 + 5 / 6)
+    assert fractional_to_american(*frac) == -120
+    assert implied_probability_from_decimal(decimal) == pytest.approx(0.4)
+    assert implied_probability_from_fractional(*frac) == pytest.approx(0.54545, rel=1e-4)
+
+
+def test_kelly_fraction_respects_fractional_multiplier() -> None:
+    base = KellyCriterion.fraction(0.55, 0.45, +100)
+    half = KellyCriterion.fraction(0.55, 0.45, +100, fractional_kelly=0.5)
+    assert half == pytest.approx(base * 0.5)
+    capped = KellyCriterion.fraction(0.55, 0.45, +100, cap=0.05)
+    assert capped <= 0.05
+
+
+def test_portfolio_manager_correlation_and_simulation() -> None:
+    manager = PortfolioManager(
+        bankroll=100.0,
+        max_risk_per_bet=1.0,
+        max_event_exposure=1.0,
+        fractional_kelly=1.0,
+        correlation_limits={"team": 0.5},
+    )
+    winning = Opportunity(
+        event_id="E1",
+        sportsbook="book",
+        book_market_group="Game Lines",
+        market="moneyline",
+        scope="game",
+        entity_type="team",
+        team_or_player="NE",
+        side=None,
+        line=None,
+        american_odds=+100,
+        model_probability=1.0,
+        push_probability=0.0,
+        implied_probability=0.5,
+        expected_value=0.5,
+        kelly_fraction=1.0,
+        extra={"correlation_group": "team"},
+    )
+    first = manager.allocate(winning)
+    assert first is not None
+    second = manager.allocate(winning)
+    assert second is None
+    simulation = manager.simulate_bankroll(trials=3, seed=1)
+    assert simulation.trials == 3
+    assert simulation.terminal_balances[0] == pytest.approx(150.0)
+    summary = simulation.summary()
+    assert summary["average_drawdown"] == pytest.approx(0.0)
 def test_line_movement_analyzer_orders_by_magnitude() -> None:
     timestamp = dt.datetime(2024, 9, 1, tzinfo=dt.timezone.utc)
     history = [

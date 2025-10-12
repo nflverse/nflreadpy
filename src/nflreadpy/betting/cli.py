@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import json
 from collections import defaultdict
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from . import (
     Dashboard,
@@ -19,11 +19,13 @@ from . import (
     Opportunity,
     PlayerPropForecaster,
     PortfolioManager,
+    BankrollSimulationResult,
     QuantumPortfolioOptimizer,
     consolidate_best_prices,
 )
 from .alerts import AlertManager, get_alert_manager
 from .analytics import LineMovement
+from .dashboard import RiskSummary
 from .ingestion import IngestedOdds
 from .models import PlayerProjection, SimulationResult, TeamRating
 from .scheduler import Scheduler
@@ -98,17 +100,65 @@ def _run_simulations(quotes: Sequence[OddsQuote], iterations: int) -> List[Simul
     return simulations
 
 
+def _parse_correlation_limits(values: Sequence[str] | None) -> Dict[str, float]:
+    limits: Dict[str, float] = {}
+    if not values:
+        return limits
+    for entry in values:
+        if not entry:
+            continue
+        separator = "=" if "=" in entry else ":" if ":" in entry else None
+        if separator is None:
+            raise ValueError(
+                "Correlation limits must be provided as 'group=value' or 'group:value'"
+            )
+        group, raw_value = entry.split(separator, 1)
+        group = group.strip()
+        if not group:
+            raise ValueError("Correlation group cannot be empty")
+        try:
+            limit = float(raw_value)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Invalid correlation limit '{entry}'") from exc
+        limits[group] = limit
+    return limits
+
+
+def _build_portfolio(
+    opportunities: Sequence[Opportunity],
+    *,
+    bankroll: float,
+    portfolio_fraction: float,
+    correlation_limits: Mapping[str, float],
+    risk_trials: int,
+    risk_seed: int | None,
+) -> Tuple[PortfolioManager, BankrollSimulationResult | None]:
+    manager = PortfolioManager(
+        bankroll=bankroll,
+        fractional_kelly=portfolio_fraction,
+        correlation_limits=correlation_limits,
+    )
+    for opportunity in opportunities:
+        manager.allocate(opportunity)
+    simulation: BankrollSimulationResult | None = None
+    if risk_trials > 0 and manager.positions:
+        simulation = manager.simulate_bankroll(trials=risk_trials, seed=risk_seed)
+    return manager, simulation
+
+
 def _detect_opportunities(
     quotes: Sequence[OddsQuote],
     simulations: Sequence[SimulationResult],
     *,
     value_threshold: float,
     alert_manager: AlertManager | None,
+    kelly_fraction: float,
 ) -> List[Opportunity]:
     detector = EdgeDetector(
         value_threshold=value_threshold,
         player_model=_build_player_model(),
         alert_manager=alert_manager,
+        kelly_fraction=kelly_fraction,
     )
     opportunities = detector.detect(quotes, simulations)
     return consolidate_best_prices(opportunities)
@@ -132,24 +182,60 @@ def _render_opportunities(opportunities: Sequence[Opportunity]) -> None:
         )
 
 
-def _portfolio_allocation(opportunities: Sequence[Opportunity], bankroll: float) -> None:
-    manager = PortfolioManager(bankroll=bankroll)
+def _portfolio_allocation(
+    opportunities: Sequence[Opportunity],
+    *,
+    bankroll: float,
+    portfolio_fraction: float,
+    correlation_limits: Mapping[str, float],
+    risk_trials: int,
+    risk_seed: int | None,
+) -> Tuple[PortfolioManager, BankrollSimulationResult | None]:
+    manager, simulation = _build_portfolio(
+        opportunities,
+        bankroll=bankroll,
+        portfolio_fraction=portfolio_fraction,
+        correlation_limits=correlation_limits,
+        risk_trials=risk_trials,
+        risk_seed=risk_seed,
+    )
     optimizer = QuantumPortfolioOptimizer(shots=256, seed=13)
     optimised = optimizer.optimise(opportunities)
     print("\nQuantum-inspired ranking (top states):")
     for opp, weight in optimised[:5]:
         print(f"  {opp.event_id} {opp.market} {opp.team_or_player}: {weight:.2%}")
     print("\nPortfolio allocations:")
-    for opp in opportunities:
-        position = manager.allocate(opp)
-        if not position:
-            continue
+    for position in manager.positions:
+        opp = position.opportunity
         print(
             f"  Stake {position.stake:>6.2f} units on {opp.event_id}"
             f" {opp.market} {opp.team_or_player} @ {opp.american_odds:+d}"
         )
     print("\nExposure by event:")
     print(json.dumps(manager.exposure_report(), indent=2, default=str))
+    correlation = manager.correlation_report()
+    if correlation:
+        print("\nCorrelation exposure:")
+        print(json.dumps(correlation, indent=2, default=str))
+    if simulation:
+        summary = simulation.summary()
+        print("\nBankroll simulation summary:")
+        print(
+            json.dumps(
+                {
+                    "trials": int(summary["trials"]),
+                    "mean_terminal": summary["mean_terminal"],
+                    "median_terminal": summary["median_terminal"],
+                    "worst_terminal": summary["worst_terminal"],
+                    "average_drawdown": summary["average_drawdown"],
+                    "worst_drawdown": summary["worst_drawdown"],
+                    "p05_drawdown": summary["p05_drawdown"],
+                    "p95_drawdown": summary["p95_drawdown"],
+                },
+                indent=2,
+            )
+        )
+    return manager, simulation
 
 
 def _line_movement(
@@ -220,14 +306,23 @@ async def _cmd_simulate(args: argparse.Namespace, alert_manager: AlertManager | 
             ingested = await service.fetch_and_store()
     quotes = _quotes_from_ingested(ingested)
     simulations = _run_simulations(quotes, args.iterations)
+    correlation_limits = _parse_correlation_limits(args.correlation_limit)
     opportunities = _detect_opportunities(
         quotes,
         simulations,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
+        kelly_fraction=args.kelly_fraction,
     )
     _render_opportunities(opportunities)
-    _portfolio_allocation(opportunities, bankroll=args.bankroll)
+    manager, simulation = _portfolio_allocation(
+        opportunities,
+        bankroll=args.bankroll,
+        portfolio_fraction=args.portfolio_fraction,
+        correlation_limits=correlation_limits,
+        risk_trials=args.risk_trials,
+        risk_seed=args.risk_seed,
+    )
     movements = _line_movement(
         service,
         limit=args.history_limit,
@@ -249,6 +344,7 @@ async def _cmd_scan(args: argparse.Namespace, alert_manager: AlertManager | None
         simulations,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
+        kelly_fraction=args.kelly_fraction,
     )
     _render_opportunities(opportunities)
     movements = _line_movement(
@@ -270,14 +366,33 @@ async def _cmd_dashboard(args: argparse.Namespace, alert_manager: AlertManager |
             latest = await service.fetch_and_store()
     quotes = _quotes_from_ingested(latest)
     simulations = _run_simulations(quotes, args.iterations)
+    correlation_limits = _parse_correlation_limits(args.correlation_limit)
     opportunities = _detect_opportunities(
         quotes,
         simulations,
         value_threshold=args.value_threshold,
         alert_manager=alert_manager,
+        kelly_fraction=args.kelly_fraction,
+    )
+    manager, simulation = _build_portfolio(
+        opportunities,
+        bankroll=args.bankroll,
+        portfolio_fraction=args.portfolio_fraction,
+        correlation_limits=correlation_limits,
+        risk_trials=args.risk_trials,
+        risk_seed=args.risk_seed,
     )
     dashboard = Dashboard()
-    rendered = dashboard.render(latest, simulations, opportunities)
+    risk_summary = RiskSummary(
+        bankroll=args.bankroll,
+        opportunity_fraction=args.kelly_fraction,
+        portfolio_fraction=args.portfolio_fraction,
+        positions=tuple(manager.positions),
+        exposure_by_event=manager.exposure_report(),
+        correlation_exposure=manager.correlation_report(),
+        simulation=simulation,
+    )
+    rendered = dashboard.render(latest, simulations, opportunities, risk_summary=risk_summary)
     print(rendered)
 
 
@@ -343,6 +458,13 @@ def _build_parser() -> argparse.ArgumentParser:
     simulate_parser.add_argument("--value-threshold", type=float, default=0.01)
     simulate_parser.add_argument("--history-limit", type=int, default=128)
     simulate_parser.add_argument("--movement-threshold", type=int, default=40)
+    simulate_parser.add_argument("--kelly-fraction", type=float, default=1.0)
+    simulate_parser.add_argument("--portfolio-fraction", type=float, default=1.0)
+    simulate_parser.add_argument(
+        "--correlation-limit", action="append", default=[], help="Limit correlated exposure"
+    )
+    simulate_parser.add_argument("--risk-trials", type=int, default=500)
+    simulate_parser.add_argument("--risk-seed", type=int)
     simulate_parser.set_defaults(handler=_cmd_simulate)
 
     scan_parser = subparsers.add_parser(
@@ -354,6 +476,7 @@ def _build_parser() -> argparse.ArgumentParser:
     scan_parser.add_argument("--history-limit", type=int, default=256)
     scan_parser.add_argument("--value-threshold", type=float, default=0.02)
     scan_parser.add_argument("--movement-threshold", type=int, default=30)
+    scan_parser.add_argument("--kelly-fraction", type=float, default=1.0)
     scan_parser.set_defaults(handler=_cmd_scan)
 
     dashboard_parser = subparsers.add_parser(
@@ -364,6 +487,14 @@ def _build_parser() -> argparse.ArgumentParser:
     dashboard_parser.add_argument("--iterations", type=int, default=15_000)
     dashboard_parser.add_argument("--refresh", action="store_true", default=False)
     dashboard_parser.add_argument("--value-threshold", type=float, default=0.015)
+    dashboard_parser.add_argument("--bankroll", type=float, default=1000.0)
+    dashboard_parser.add_argument("--kelly-fraction", type=float, default=1.0)
+    dashboard_parser.add_argument("--portfolio-fraction", type=float, default=1.0)
+    dashboard_parser.add_argument(
+        "--correlation-limit", action="append", default=[], help="Limit correlated exposure"
+    )
+    dashboard_parser.add_argument("--risk-trials", type=int, default=250)
+    dashboard_parser.add_argument("--risk-seed", type=int)
     dashboard_parser.set_defaults(handler=_cmd_dashboard)
 
     backtest_parser = subparsers.add_parser(

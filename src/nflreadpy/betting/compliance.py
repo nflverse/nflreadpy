@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import os
-from typing import Iterable, Mapping, Sequence, TYPE_CHECKING
+from typing import Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checkers only
     from .analytics import Opportunity
@@ -26,6 +27,12 @@ class ComplianceConfig:
     require_overtime_included: bool = False
     jurisdiction_allowlist: set[str] | None = None
     banned_sportsbooks: set[str] = dataclasses.field(default_factory=set)
+    credential_requirements: dict[str, set[str]] = dataclasses.field(
+        default_factory=dict
+    )
+    credentials_available: dict[str, set[str]] = dataclasses.field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         self.allowed_push_handling = {
@@ -36,6 +43,27 @@ class ComplianceConfig:
                 str(item).lower() for item in self.jurisdiction_allowlist
             }
         self.banned_sportsbooks = {str(item).lower() for item in self.banned_sportsbooks}
+        self.credential_requirements = self._normalise_credential_map(
+            self.credential_requirements
+        )
+        self.credentials_available = self._normalise_credential_map(
+            self.credentials_available
+        )
+
+    @staticmethod
+    def _normalise_credential_map(
+        payload: Mapping[str, Iterable[str]] | MutableMapping[str, Iterable[str]]
+        | None,
+    ) -> dict[str, set[str]]:
+        if not payload:
+            return {}
+        normalised: dict[str, set[str]] = {}
+        for sportsbook, keys in payload.items():
+            sportsbook_key = str(sportsbook).strip().lower()
+            normalised[sportsbook_key] = {
+                str(item).strip().lower() for item in keys if str(item).strip()
+            }
+        return normalised
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, object]) -> "ComplianceConfig":
@@ -54,11 +82,16 @@ class ComplianceConfig:
             return {str(item).strip().lower() for item in items if str(item).strip()}
 
         allowed_push = _to_set("allowed_push_handling")
+        requirements = cls._coerce_credential_map(payload.get("credential_requirements"))
+        available = cls._coerce_credential_map(payload.get("credentials_available"))
+
         return cls(
             allowed_push_handling=allowed_push or cls().allowed_push_handling,
             require_overtime_included=bool(payload.get("require_overtime_included", False)),
             jurisdiction_allowlist=_to_set("jurisdiction_allowlist"),
             banned_sportsbooks=_to_set("banned_sportsbooks") or set(),
+            credential_requirements=requirements or {},
+            credentials_available=available or {},
         )
 
     @classmethod
@@ -90,7 +123,44 @@ class ComplianceConfig:
         banned = os.getenv(f"{prefix}BANNED_SPORTSBOOKS")
         if banned:
             payload["banned_sportsbooks"] = banned
+        required = os.getenv(f"{prefix}REQUIRED_CREDENTIALS")
+        if required:
+            payload["credential_requirements"] = cls._parse_credential_env(required)
+        available = os.getenv(f"{prefix}CREDENTIALS_AVAILABLE")
+        if available:
+            payload["credentials_available"] = cls._parse_credential_env(available)
         return cls.from_mapping(payload)
+
+    @staticmethod
+    def _coerce_credential_map(value: object) -> dict[str, set[str]] | None:
+        if value is None:
+            return None
+        if isinstance(value, Mapping):
+            return ComplianceConfig._normalise_credential_map(value)
+        raise TypeError(
+            "credential mappings must be dictionaries of sportsbook -> sequence of keys"
+        )
+
+    @staticmethod
+    def _parse_credential_env(value: str) -> dict[str, set[str]]:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, Mapping):
+            return ComplianceConfig._normalise_credential_map(parsed)
+        mapping: dict[str, set[str]] = {}
+        entries = [item for item in value.split(";") if item.strip()]
+        for entry in entries:
+            sportsbook, _, keys = entry.partition(":")
+            sportsbook_key = sportsbook.strip().lower()
+            if not sportsbook_key:
+                continue
+            key_items = [
+                item.strip().lower() for item in keys.split(",") if item.strip()
+            ]
+            mapping[sportsbook_key] = set(key_items)
+        return mapping
 
 
 @dataclasses.dataclass(slots=True)
@@ -153,10 +223,28 @@ class ComplianceEngine:
         if self.config.require_overtime_included and not bool(includes_ot):
             reasons.append("overtime_not_included")
 
-        if self.config.banned_sportsbooks:
-            sportsbook = getattr(opportunity, "sportsbook", "").lower()
-            if sportsbook in self.config.banned_sportsbooks:
-                reasons.append(f"sportsbook_banned={sportsbook}")
+        sportsbook = getattr(opportunity, "sportsbook", "").lower()
+        if self.config.banned_sportsbooks and sportsbook in self.config.banned_sportsbooks:
+            reasons.append(f"sportsbook_banned={sportsbook}")
+
+        if self.config.credential_requirements:
+            required = self.config.credential_requirements.get(sportsbook, set())
+            if required:
+                provided = set(self.config.credentials_available.get(sportsbook, set()))
+                credentials_meta = metadata.get("credentials")
+                if isinstance(credentials_meta, Mapping):
+                    provided.update(
+                        {
+                            str(key).strip().lower()
+                            for key, value in credentials_meta.items()
+                            if value not in {None, ""}
+                        }
+                    )
+                missing = required.difference(provided)
+                if missing:
+                    reasons.append(
+                        "credentials_missing=" + ",".join(sorted(missing))
+                    )
 
         jurisdictions_raw = metadata.get("jurisdictions")
         if isinstance(jurisdictions_raw, str):

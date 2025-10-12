@@ -82,6 +82,10 @@ class OddsIngestionService:
     def metrics(self) -> Mapping[str, Any]:
         return self._metrics
 
+    @property
+    def last_validation_summary(self) -> Mapping[str, int]:
+        return dict(self._last_validation_summary)
+
     def _instantiate_scrapers(
         self, scraper_configs: Sequence[Mapping[str, Any]] | None
     ) -> List[SportsbookScraper]:
@@ -269,6 +273,10 @@ class OddsIngestionService:
                 payload,
             )
             conn.commit()
+        self._audit_logger.info(
+            "ingestion.persisted",
+            extra={"persisted": len(valid_quotes), "requested": len(quotes)},
+        )
 
         discarded_summary = self._last_validation_summary
         self._metrics = {

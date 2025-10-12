@@ -548,7 +548,7 @@ class EdgeDetector:
             for (quote, _base_probability, _sim_result), adj_probability, expected_value in zip(
                 evaluations, adjusted_probabilities, expected_values
             ):
-                if expected_value < self.value_threshold:
+                if self.value_threshold > 0.0 and expected_value < self.value_threshold:
                     continue
                 implied = quote.implied_probability()
                 kelly = KellyCriterion.fraction(adj_probability.win, adj_probability.loss, quote.american_odds)

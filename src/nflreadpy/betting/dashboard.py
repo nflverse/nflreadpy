@@ -395,6 +395,30 @@ class Dashboard:
             lines.append("Correlation limits:")
             for group, fraction in sorted(summary.correlation_limits.items()):
                 lines.append(f"  {group}: {fraction:.2%} of bankroll")
+        comparison = summary.optimizer_comparison
+        if comparison is not None:
+            lines.append("Optimizer comparison metrics:")
+            lines.append(
+                "  EV diff (classical - quantum): "
+                f"{comparison.expected_value_difference:,.4f}"
+            )
+            lines.append(
+                "  Stake overlap: "
+                f"{comparison.overlap_fraction:.2%}"
+                f" ({comparison.overlapping_opportunities} shared)"
+            )
+            classical_sharpe = (
+                f"{comparison.classical.sharpe_like:.3f}"
+                if comparison.classical.sharpe_like is not None
+                else "N/A"
+            )
+            quantum_sharpe = (
+                f"{comparison.quantum.sharpe_like:.3f}"
+                if comparison.quantum.sharpe_like is not None
+                else "N/A"
+            )
+            lines.append(f"  Classical Sharpe-like: {classical_sharpe}")
+            lines.append(f"  Quantum Sharpe-like:    {quantum_sharpe}")
         metrics = summary.bankroll_summary
         if metrics is None and summary.simulation:
             metrics = summary.simulation.summary()

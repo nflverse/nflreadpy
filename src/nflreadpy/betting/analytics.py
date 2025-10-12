@@ -5,14 +5,17 @@
 from __future__ import annotations
 
 import collections
+import csv
 import dataclasses
 import datetime as dt
+import json
 import logging
 import math
 import random
 import statistics
 import time
 from collections.abc import Iterable
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -186,6 +189,17 @@ if TYPE_CHECKING:
     def best_prices_by_selection(
         quotes: Sequence[OddsQuote],
     ) -> Dict[Tuple[str, str, ScopeLiteral, str, str | None, float | None], OddsQuote]: ...
+
+    class QuantumOptimizer(Protocol):
+        shots: int
+        temperature: float
+        seed: int | None
+
+        def optimise(
+            self,
+            opportunities: Sequence["Opportunity"],
+            risk_aversion: float = ...,
+        ) -> List[Tuple["Opportunity", float]]: ...
 else:  # pragma: no cover - imported for runtime behaviour
     import importlib
 
@@ -979,6 +993,78 @@ class BankrollSimulationResult:
         }
 
 
+@dataclasses.dataclass(slots=True)
+class PortfolioComparisonSide:
+    """Summary statistics for an optimizer's portfolio allocations."""
+
+    label: str
+    positions: Tuple[PortfolioPosition, ...]
+    total_stake: float
+    expected_return: float
+    variance: float
+    standard_deviation: float
+    sharpe_like: float | None
+    stake_fractions: Dict[
+        Tuple[
+            str,
+            str,
+            str,
+            str,
+            str,
+            str | None,
+            float | None,
+            int,
+        ],
+        float,
+    ]
+
+
+@dataclasses.dataclass(slots=True)
+class OptimizerComparisonResult:
+    """Container describing the outcome of an optimizer comparison run."""
+
+    timestamp: dt.datetime
+    bankroll: float
+    opportunities_considered: int
+    classical: PortfolioComparisonSide
+    quantum: PortfolioComparisonSide
+    overlap_fraction: float
+    overlapping_opportunities: int
+    expected_value_difference: float
+    metadata: Mapping[str, Any]
+    run_id: str
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serialisable summary payload."""
+
+        return {
+            "comparison_id": self.run_id,
+            "timestamp": self.timestamp.isoformat(),
+            "bankroll": self.bankroll,
+            "opportunities": self.opportunities_considered,
+            "overlap": {
+                "fraction": self.overlap_fraction,
+                "count": self.overlapping_opportunities,
+            },
+            "expected_value_difference": self.expected_value_difference,
+            "classical": {
+                "total_stake": self.classical.total_stake,
+                "expected_return": self.classical.expected_return,
+                "variance": self.classical.variance,
+                "standard_deviation": self.classical.standard_deviation,
+                "sharpe_like": self.classical.sharpe_like,
+            },
+            "quantum": {
+                "total_stake": self.quantum.total_stake,
+                "expected_return": self.quantum.expected_return,
+                "variance": self.quantum.variance,
+                "standard_deviation": self.quantum.standard_deviation,
+                "sharpe_like": self.quantum.sharpe_like,
+            },
+            "metadata": dict(self.metadata),
+        }
+
+
 def _percentile(values: Iterable[float], percentile: float) -> float:
     data = sorted(values)
     if not data:
@@ -1278,4 +1364,264 @@ def consolidate_best_prices(opportunities: Sequence[Opportunity]) -> List[Opport
         if best_quote and best_quote.american_odds == opportunity.american_odds:
             filtered.append(opportunity)
     return filtered
+
+
+def compare_optimizers(
+    opportunities: Sequence[Opportunity],
+    *,
+    bankroll: float,
+    fractional_kelly: float = 1.0,
+    max_risk_per_bet: float = 0.02,
+    max_event_exposure: float = 0.1,
+    correlation_limits: Mapping[str, float] | None = None,
+    quantum_optimizer: "QuantumOptimizer" | None = None,
+    risk_aversion: float = 0.4,
+    target_total_stake: float | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    run_id: str | None = None,
+    timestamp: dt.datetime | None = None,
+) -> OptimizerComparisonResult:
+    """Compare classical bankroll management against a quantum optimiser."""
+
+    ts = timestamp or dt.datetime.now(dt.timezone.utc)
+    identifier = run_id or ts.strftime("comparison_%Y%m%d%H%M%S")
+    portfolio = PortfolioManager(
+        bankroll=bankroll,
+        max_risk_per_bet=max_risk_per_bet,
+        max_event_exposure=max_event_exposure,
+        fractional_kelly=fractional_kelly,
+        correlation_limits=correlation_limits or {},
+    )
+    for opportunity in opportunities:
+        portfolio.allocate(opportunity)
+    classical_positions = tuple(portfolio.positions)
+    classical_side = _build_comparison_side("classical", classical_positions)
+
+    optimizer = quantum_optimizer
+    if optimizer is None:
+        from .quantum import QuantumPortfolioOptimizer  # local import to avoid circular
+
+        optimizer = QuantumPortfolioOptimizer()
+    allocations = optimizer.optimise(opportunities, risk_aversion=risk_aversion)
+    reference_total = (
+        target_total_stake
+        if target_total_stake is not None
+        else classical_side.total_stake
+        if classical_side.total_stake > 0
+        else bankroll * max_risk_per_bet
+    )
+    quantum_positions: List[PortfolioPosition] = []
+    for opportunity, weight in allocations:
+        if weight <= 0.0:
+            continue
+        stake = reference_total * weight
+        if stake <= 0.0:
+            continue
+        quantum_positions.append(PortfolioPosition(opportunity, stake))
+    quantum_side = _build_comparison_side("quantum", tuple(quantum_positions))
+
+    overlap_fraction, overlap_count = _stake_overlap(
+        classical_side.stake_fractions, quantum_side.stake_fractions
+    )
+    metadata_payload: Dict[str, Any] = dict(metadata or {})
+    metadata_payload.setdefault("fractional_kelly", fractional_kelly)
+    metadata_payload.setdefault("risk_aversion", risk_aversion)
+    metadata_payload.setdefault("bankroll", bankroll)
+    metadata_payload.setdefault("max_risk_per_bet", max_risk_per_bet)
+    metadata_payload.setdefault("max_event_exposure", max_event_exposure)
+    if getattr(optimizer, "shots", None) is not None:
+        metadata_payload.setdefault("quantum_shots", getattr(optimizer, "shots"))
+    if getattr(optimizer, "temperature", None) is not None:
+        metadata_payload.setdefault("quantum_temperature", getattr(optimizer, "temperature"))
+    if getattr(optimizer, "seed", None) is not None:
+        metadata_payload.setdefault("quantum_seed", getattr(optimizer, "seed"))
+
+    expected_difference = (
+        classical_side.expected_return - quantum_side.expected_return
+    )
+    return OptimizerComparisonResult(
+        timestamp=ts,
+        bankroll=bankroll,
+        opportunities_considered=len(opportunities),
+        classical=classical_side,
+        quantum=quantum_side,
+        overlap_fraction=overlap_fraction,
+        overlapping_opportunities=overlap_count,
+        expected_value_difference=expected_difference,
+        metadata=metadata_payload,
+        run_id=identifier,
+    )
+
+
+def persist_optimizer_comparison(
+    result: OptimizerComparisonResult,
+    output_dir: str | Path,
+    *,
+    summary_filename: str | None = None,
+    allocations_filename: str | None = None,
+) -> tuple[Path, Path]:
+    """Persist comparison artefacts to disk for regression tracking."""
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    summary_path = destination / (
+        summary_filename or f"{result.run_id}_summary.json"
+    )
+    allocations_path = destination / (
+        allocations_filename or f"{result.run_id}_allocations.csv"
+    )
+    summary_path.write_text(json.dumps(result.to_summary_dict(), indent=2))
+
+    fieldnames = [
+        "comparison_id",
+        "timestamp",
+        "optimizer",
+        "event_id",
+        "sportsbook",
+        "book_market_group",
+        "market",
+        "scope",
+        "team_or_player",
+        "side",
+        "line",
+        "american_odds",
+        "allocation_stake",
+        "stake_fraction",
+        "expected_value",
+        "model_probability",
+        "push_probability",
+        "implied_probability",
+        "kelly_fraction",
+    ]
+    with allocations_path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for side in (result.classical, result.quantum):
+            for position in side.positions:
+                opportunity = position.opportunity
+                key = _opportunity_key(opportunity)
+                writer.writerow(
+                    {
+                        "comparison_id": result.run_id,
+                        "timestamp": result.timestamp.isoformat(),
+                        "optimizer": side.label,
+                        "event_id": opportunity.event_id,
+                        "sportsbook": opportunity.sportsbook,
+                        "book_market_group": opportunity.book_market_group,
+                        "market": opportunity.market,
+                        "scope": opportunity.scope,
+                        "team_or_player": opportunity.team_or_player,
+                        "side": opportunity.side,
+                        "line": opportunity.line,
+                        "american_odds": opportunity.american_odds,
+                        "allocation_stake": position.stake,
+                        "stake_fraction": side.stake_fractions.get(key, 0.0),
+                        "expected_value": opportunity.expected_value,
+                        "model_probability": opportunity.model_probability,
+                        "push_probability": opportunity.push_probability,
+                        "implied_probability": opportunity.implied_probability,
+                        "kelly_fraction": opportunity.kelly_fraction,
+                    }
+                )
+    return summary_path, allocations_path
+
+
+def _build_comparison_side(
+    label: str, positions: Sequence[PortfolioPosition]
+) -> PortfolioComparisonSide:
+    total_stake, expected_return, variance, std_dev, sharpe = _portfolio_statistics(
+        positions
+    )
+    fractions = _stake_fractions(positions, total_stake)
+    return PortfolioComparisonSide(
+        label=label,
+        positions=tuple(positions),
+        total_stake=total_stake,
+        expected_return=expected_return,
+        variance=variance,
+        standard_deviation=std_dev,
+        sharpe_like=sharpe,
+        stake_fractions=fractions,
+    )
+
+
+def _portfolio_statistics(
+    positions: Sequence[PortfolioPosition],
+) -> tuple[float, float, float, float, float | None]:
+    total_stake = sum(position.stake for position in positions)
+    expected_return = 0.0
+    variance = 0.0
+    for position in positions:
+        opportunity = position.opportunity
+        stake = position.stake
+        mean = stake * opportunity.expected_value
+        expected_return += mean
+        win_prob = max(0.0, min(1.0, opportunity.model_probability))
+        push_prob = max(0.0, min(1.0 - win_prob, opportunity.push_probability))
+        loss_prob = max(0.0, 1.0 - win_prob - push_prob)
+        profit = stake * opportunity.decimal_multiplier()
+        loss = stake
+        variance += win_prob * (profit - mean) ** 2
+        variance += loss_prob * (-loss - mean) ** 2
+        variance += push_prob * (0.0 - mean) ** 2
+    std_dev = math.sqrt(variance) if variance > 0.0 else 0.0
+    sharpe = None
+    if std_dev > 0.0:
+        sharpe = expected_return / std_dev
+    return total_stake, expected_return, variance, std_dev, sharpe
+
+
+def _stake_fractions(
+    positions: Sequence[PortfolioPosition], total_stake: float
+) -> Dict[
+    Tuple[str, str, str, str, str, str | None, float | None, int],
+    float,
+]:
+    if total_stake <= 0.0:
+        return {}
+    fractions: Dict[
+        Tuple[str, str, str, str, str, str | None, float | None, int],
+        float,
+    ] = {}
+    for position in positions:
+        key = _opportunity_key(position.opportunity)
+        fractions[key] = position.stake / total_stake
+    return fractions
+
+
+def _stake_overlap(
+    classical: Mapping[
+        Tuple[str, str, str, str, str, str | None, float | None, int], float
+    ],
+    quantum: Mapping[
+        Tuple[str, str, str, str, str, str | None, float | None, int], float
+    ],
+) -> tuple[float, int]:
+    if not classical or not quantum:
+        return 0.0, 0
+    overlap_fraction = 0.0
+    overlap_count = 0
+    for key, fraction in classical.items():
+        other = quantum.get(key)
+        if other is None or other <= 0.0:
+            continue
+        overlap_fraction += min(fraction, other)
+        overlap_count += 1
+    return min(1.0, overlap_fraction), overlap_count
+
+
+def _opportunity_key(
+    opportunity: Opportunity,
+) -> Tuple[str, str, str, str, str, str | None, float | None, int]:
+    return (
+        opportunity.event_id,
+        opportunity.sportsbook,
+        opportunity.book_market_group,
+        opportunity.market,
+        opportunity.scope,
+        opportunity.team_or_player,
+        opportunity.side,
+        opportunity.line,
+        opportunity.american_odds,
+    )
 

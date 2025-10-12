@@ -6,7 +6,12 @@ import dataclasses
 from collections import defaultdict
 from typing import Iterable, Mapping, Sequence, Tuple
 
-from .analytics import BankrollSimulationResult, Opportunity, PortfolioPosition
+from .analytics import (
+    BankrollSimulationResult,
+    Opportunity,
+    PortfolioPosition,
+    OptimizerComparisonResult,
+)
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 
@@ -74,6 +79,7 @@ class RiskSummary:
     correlation_limits: Mapping[str, float] = dataclasses.field(default_factory=dict)
     simulation: BankrollSimulationResult | None = None
     bankroll_summary: Mapping[str, float] | None = None
+    optimizer_comparison: OptimizerComparisonResult | None = None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

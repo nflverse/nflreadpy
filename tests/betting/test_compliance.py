@@ -62,10 +62,14 @@ def test_compliance_rejects_and_logs(caplog: pytest.LogCaptureFixture, opportuni
     result = manager.allocate(opportunity)
     assert result is None
     assert any(rec.getMessage() == "compliance.violation" for rec in caplog.records)
-    assert any(
-        rec.getMessage() == "portfolio.rejected" and getattr(rec, "reason", "") == "compliance"
+    rejection_records = [
+        rec
         for rec in caplog.records
-    )
+        if rec.getMessage() == "portfolio.rejected"
+        and getattr(rec, "reason", "") == "compliance"
+    ]
+    assert rejection_records
+    assert any(getattr(rec, "reasons", []) for rec in rejection_records)
 
 
 def test_compliance_rejects_missing_credentials(
@@ -90,14 +94,21 @@ def test_compliance_rejects_missing_credentials(
     result = manager.allocate(opportunity)
     assert result is None
     violations = [
-        rec
-        for rec in caplog.records
-        if rec.getMessage() == "compliance.violation"
+        rec for rec in caplog.records if rec.getMessage() == "compliance.violation"
     ]
     assert violations
     assert any(
         "credentials_missing" in ",".join(getattr(rec, "reasons", []))
         for rec in violations
+    )
+    portfolio_rejections = [
+        rec
+        for rec in caplog.records
+        if rec.getMessage() == "portfolio.rejected"
+    ]
+    assert any(
+        "credentials_missing" in ",".join(getattr(rec, "reasons", []))
+        for rec in portfolio_rejections
     )
 
 

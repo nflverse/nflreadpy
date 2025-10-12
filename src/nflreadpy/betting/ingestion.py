@@ -369,7 +369,7 @@ class OddsIngestionService:
         valid: List[OddsQuote] = []
         summary: MutableMapping[str, int] = {}
         for quote in quotes:
-            reason = self._validate_quote(quote, now)
+            reason, compliance_reasons = self._validate_quote(quote, now)
             if reason is None:
                 valid.append(quote)
             else:
@@ -381,14 +381,17 @@ class OddsIngestionService:
                     quote.event_id,
                     reason,
                 )
+                payload = {
+                    "reason": reason,
+                    "event_id": quote.event_id,
+                    "sportsbook": quote.sportsbook,
+                    "market": quote.market,
+                }
+                if compliance_reasons:
+                    payload["compliance_reasons"] = list(compliance_reasons)
                 self._audit_logger.warning(
                     "ingestion.discarded",
-                    extra={
-                        "reason": reason,
-                        "event_id": quote.event_id,
-                        "sportsbook": quote.sportsbook,
-                        "market": quote.market,
-                    },
+                    extra=payload,
                 )
         self._last_validation_summary = dict(summary)
         if summary:
@@ -433,27 +436,27 @@ class OddsIngestionService:
 
     def _validate_quote(
         self, quote: OddsQuote, reference_time: dt.datetime
-    ) -> str | None:
+    ) -> tuple[str | None, list[str]]:
         if quote.american_odds == 0:
-            return "invalid_odds"
+            return "invalid_odds", []
         if not isinstance(quote.american_odds, int):
-            return "invalid_odds"
+            return "invalid_odds", []
         if abs(quote.american_odds) > 100000:
-            return "invalid_odds"
+            return "invalid_odds", []
         if abs(quote.american_odds) < 100 and quote.american_odds not in {100, -100}:
-            return "invalid_odds"
+            return "invalid_odds", []
         if quote.line is not None and not isinstance(quote.line, (int, float)):
-            return "invalid_line"
+            return "invalid_line", []
         if isinstance(quote.line, float) and not math.isfinite(quote.line):
-            return "invalid_line"
+            return "invalid_line", []
         if not quote.team_or_player:
-            return "missing_selection"
+            return "missing_selection", []
         observed = quote.observed_at
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=dt.timezone.utc)
         observed = observed.astimezone(dt.timezone.utc)
         if observed < reference_time - self._stale_after:
-            return "stale"
+            return "stale", []
         if self._compliance_engine:
             compliant, reasons = self._compliance_engine.evaluate_metadata(
                 sportsbook=quote.sportsbook,
@@ -466,10 +469,10 @@ class OddsIngestionService:
                 reason = "non_compliant"
                 if reasons:
                     reason = "non_compliant:" + ";".join(reasons)
-                return reason
+                return reason, list(reasons)
         if observed > reference_time + self._future_tolerance:
-            return "future_timestamp"
-        return None
+            return "future_timestamp", []
+        return None, []
 
     def _maybe_alert_on_scraper_failures(
         self, per_scraper: Mapping[str, Mapping[str, Any]]

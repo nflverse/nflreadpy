@@ -41,6 +41,7 @@ nav:
     - Configuration: api/configuration.md
     - Cache Management: api/cache.md
     - Utilities: api/utils.md
+    - Betting Dashboard: api/betting_dashboard.md
   - Guides:
     - Platform Setup: guides/setup.md
     - Configuration: guides/configuration.md

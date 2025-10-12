@@ -22,8 +22,8 @@ Many hands make light work! Here are some ways you can contribute to this projec
 This project uses the following tooling:
 
 - uv or pip for dependency management
-- ruff for linting and formatting
-- mypy for type checking
+- ruff and flake8 for linting the betting toolkit
+- mypy for type checking (with strict settings on the betting toolkit)
 - pytest for testing
 - mkdocs for documentation site
 
@@ -39,11 +39,15 @@ pip install -e .[dev]
 # Run tests
 uv run pytest
 
+# Lint betting modules
+uv run ruff check src/nflreadpy/betting
+uv run flake8 src/nflreadpy/betting
+
 # Format code
 uv run ruff format
 
 # Type check
-uv run mypy src
+uv run mypy src/nflreadpy/betting
 
 # Serve docs site locally
 uv run mkdocs serve
@@ -54,6 +58,16 @@ uv run mkdocs build
 
 If you prefer pip, you can run the tools directly from your environment, for example
 `pytest`, `ruff`, `mypy`, or `mkdocs build --strict`.
+
+### Continuous Integration expectations
+
+Every pull request runs the following GitHub Actions workflows:
+
+- **`ci-test.yaml` / lint job** – executes Ruff, Flake8, and MyPy against `src/nflreadpy/betting/`. Failing lint or type checks will block the PR.
+- **`ci-test.yaml` / test matrix** – validates betting configurations, runs ingestion smoke tests, and executes the full pytest suite with coverage across the supported operating systems and Python versions.
+- **`ci-docs.yaml`** – ensures the documentation builds cleanly.
+
+Release automation (`ci-publish.yaml`) is gated on the same linting, typing, and testing checks so the published artifacts always reflect a green CI state.
 
 ## Code of Conduct
 

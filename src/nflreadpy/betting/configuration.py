@@ -91,6 +91,22 @@ class ModelsConfig(BaseModel):
     scope_scaling: ScopeScalingConfig = Field(default_factory=ScopeScalingConfig)
 
 
+class OptimizerConfig(BaseModel):
+    """Parameters controlling the portfolio optimizer selection."""
+
+    solver: str = "quantum"
+    risk_aversion: float = 0.4
+    seed: int | None = None
+    shots: int = 512
+    temperature: float = 0.6
+    annealing_steps: int = 1_024
+    annealing_initial_temp: float = 1.0
+    annealing_cooling_rate: float = 0.995
+    qaoa_layers: int = 2
+    qaoa_gamma: float = 0.8
+    qaoa_beta: float = 0.45
+
+
 class AnalyticsConfig(BaseModel):
     """Controls for downstream analytics heuristics and defaults."""
 
@@ -392,6 +408,66 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
     return warnings
 
 
+def create_portfolio_optimizer(
+    config: BettingConfig,
+    *,
+    overrides: Mapping[str, object] | None = None,
+) -> tuple["PortfolioOptimizer", float]:
+    """Construct a portfolio optimizer according to configuration."""
+
+    from .quantum import (
+        PortfolioOptimizer,
+        QAOAHeuristicOptimizer,
+        QuantumPortfolioOptimizer,
+        SimulatedAnnealingOptimizer,
+    )
+
+    analytics = config.analytics
+    settings = analytics.optimizer
+    modifiers = dict(overrides or {})
+
+    solver_name = str(modifiers.get("solver", settings.solver)).lower()
+    risk_aversion = float(modifiers.get("risk_aversion", settings.risk_aversion))
+    seed = modifiers.get("seed", settings.seed)
+
+    if solver_name in {"quantum", "amplitude"}:
+        shots = int(modifiers.get("shots", settings.shots))
+        temperature = float(modifiers.get("temperature", settings.temperature))
+        optimizer: PortfolioOptimizer = QuantumPortfolioOptimizer(
+            shots=shots,
+            temperature=temperature,
+            seed=None if seed is None else int(seed),
+        )
+    elif solver_name in {"annealing", "simulated-annealing", "simulated_annealing"}:
+        steps = int(modifiers.get("steps", settings.annealing_steps))
+        initial_temperature = float(
+            modifiers.get("initial_temperature", settings.annealing_initial_temp)
+        )
+        cooling_rate = float(
+            modifiers.get("cooling_rate", settings.annealing_cooling_rate)
+        )
+        optimizer = SimulatedAnnealingOptimizer(
+            steps=steps,
+            initial_temperature=initial_temperature,
+            cooling_rate=cooling_rate,
+            seed=None if seed is None else int(seed),
+        )
+    elif solver_name in {"qaoa", "qaoa-heuristic"}:
+        layers = int(modifiers.get("layers", settings.qaoa_layers))
+        gamma = float(modifiers.get("gamma", settings.qaoa_gamma))
+        beta = float(modifiers.get("beta", settings.qaoa_beta))
+        optimizer = QAOAHeuristicOptimizer(
+            layers=layers,
+            gamma=gamma,
+            beta=beta,
+            seed=None if seed is None else int(seed),
+        )
+    else:  # pragma: no cover - defensive guard for future solvers
+        raise ValueError(f"Unknown optimizer solver: {solver_name}")
+
+    return optimizer, max(0.0, risk_aversion)
+
+
 def create_scrapers_from_config(config: BettingConfig) -> list["SportsbookScraper"]:
     """Instantiate sportsbook scrapers defined in the configuration."""
 
@@ -508,6 +584,7 @@ __all__ = [
     "FuzzyMatchingConfig",
     "IngestionConfig",
     "IterationConfig",
+    "OptimizerConfig",
     "NormalizationConfig",
     "SchedulerConfig",
     "ScopeScalingConfig",

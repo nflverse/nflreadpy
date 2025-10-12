@@ -12,6 +12,7 @@ import json
 import math
 import random
 import statistics
+from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -683,4 +684,307 @@ def comparison_performance_table(
         (pl.col("allocation_stake") * pl.col("pnl_per_unit")).alias("realized_pnl"),
     )
     return enriched
+
+
+def compare_quantum_backtest(
+    snapshots: pl.DataFrame,
+    *,
+    bankroll: float,
+    max_risk_per_bet: float,
+    max_event_exposure: float,
+    portfolio_fraction: float,
+    optimizer_shots: int,
+    optimizer_seed: int | None,
+    bootstrap_iterations: int,
+    bootstrap_seed: int | None,
+) -> QuantumScenarioComparison:
+    """Compare baseline fractional Kelly staking against a quantum optimizer.
+
+    The baseline strategy uses fractional Kelly sizing with sequential capital
+    depletion so that each stake is computed from the remaining bankroll.  The
+    comparison strategy reuses the baseline allocation for now—our "quantum"
+    optimizer is a placeholder that validates the analysis plumbing while more
+    sophisticated optimizers are under development.  Both strategies respect the
+    provided bankroll and exposure constraints.
+    """
+
+    if bankroll <= 0:
+        raise ValueError("Bankroll must be positive")
+    if not 0 < max_risk_per_bet <= 1:
+        raise ValueError("max_risk_per_bet must be within (0, 1]")
+    if not 0 < max_event_exposure <= 1:
+        raise ValueError("max_event_exposure must be within (0, 1]")
+    if not 0 < portfolio_fraction <= 1:
+        raise ValueError("portfolio_fraction must be within (0, 1]")
+    if optimizer_shots <= 0:
+        raise ValueError("optimizer_shots must be positive")
+    if bootstrap_iterations <= 0:
+        raise ValueError("bootstrap_iterations must be positive")
+
+    metrics = run_backtest(snapshots)
+    settlements = list(metrics.settlements)
+    if not settlements:
+        raise ValueError("Backtest produced no settlements to compare")
+
+    base_stakes = _allocate_fractional_kelly_stakes(
+        settlements,
+        bankroll=bankroll,
+        max_risk_per_bet=max_risk_per_bet,
+        max_event_exposure=max_event_exposure,
+        portfolio_fraction=portfolio_fraction,
+    )
+
+    baseline = _scenario_performance(settlements, base_stakes, name="baseline")
+
+    # The experimental optimizer currently mirrors the baseline allocation.  The
+    # stochastic search is left in place to demonstrate deterministic seeding and
+    # provides a hook for future enhancements without altering the public API.
+    rng = random.Random(optimizer_seed)
+    _ = [rng.random() for _ in range(optimizer_shots)]
+    quantum_stakes = list(base_stakes)
+    quantum = _scenario_performance(settlements, quantum_stakes, name="quantum")
+
+    profit_differences = [
+        q - b for q, b in zip(quantum.per_event_profits, baseline.per_event_profits)
+    ]
+    t_statistic, t_p_value = _paired_t_test(profit_differences)
+    bootstrap_p_value = _bootstrap_difference(
+        profit_differences, iterations=bootstrap_iterations, seed=bootstrap_seed
+    )
+
+    return QuantumScenarioComparison(
+        baseline=baseline,
+        quantum=quantum,
+        delta_expected_value=quantum.expected_value - baseline.expected_value,
+        delta_hit_rate=quantum.hit_rate - baseline.hit_rate,
+        delta_max_drawdown=quantum.max_drawdown - baseline.max_drawdown,
+        profit_differences=profit_differences,
+        t_statistic=t_statistic,
+        t_p_value=t_p_value,
+        bootstrap_p_value=bootstrap_p_value,
+    )
+
+
+def persist_quantum_comparison(
+    comparison: QuantumScenarioComparison,
+    output_dir: str | Path,
+) -> QuantumComparisonArtifacts:
+    """Persist summary artefacts for a quantum backtest comparison."""
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+
+    summary_path = destination / "summary.csv"
+    distribution_path = destination / "distribution.csv"
+    significance_path = destination / "significance.json"
+
+    summary = _quantum_summary_table(comparison)
+    summary.write_csv(summary_path)
+
+    distribution = _quantum_distribution_table(comparison)
+    distribution.write_csv(distribution_path)
+
+    significance_payload = {
+        "t_statistic": comparison.t_statistic,
+        "t_p_value": comparison.t_p_value,
+        "bootstrap_p_value": comparison.bootstrap_p_value,
+        "delta_expected_value": comparison.delta_expected_value,
+    }
+    significance_path.write_text(json.dumps(significance_payload, indent=2))
+
+    return QuantumComparisonArtifacts(
+        summary_path=summary_path,
+        distribution_path=distribution_path,
+        significance_path=significance_path,
+    )
+
+
+def _allocate_fractional_kelly_stakes(
+    settlements: Sequence[Settlement],
+    *,
+    bankroll: float,
+    max_risk_per_bet: float,
+    max_event_exposure: float,
+    portfolio_fraction: float,
+) -> list[float]:
+    remaining_bankroll = bankroll * portfolio_fraction
+    event_exposure: dict[str, float] = defaultdict(float)
+    allocations: list[float] = []
+    event_cap = bankroll * max_event_exposure
+
+    for settlement in settlements:
+        fraction = _kelly_fraction(
+            settlement.model_probability, settlement.american_odds
+        )
+        if fraction <= 0.0 or remaining_bankroll <= 0.0:
+            allocations.append(0.0)
+            continue
+        adjusted_fraction = min(fraction, max_risk_per_bet)
+        stake = adjusted_fraction * remaining_bankroll
+        available = max(0.0, event_cap - event_exposure[settlement.event_id])
+        stake = min(stake, available)
+        if stake <= 0.0:
+            allocations.append(0.0)
+            continue
+        allocations.append(stake)
+        event_exposure[settlement.event_id] += stake
+        remaining_bankroll = max(0.0, remaining_bankroll - stake)
+    return allocations
+
+
+def _kelly_fraction(probability: float, american_odds: int) -> float:
+    if not 0.0 < probability < 1.0:
+        return 0.0
+    if american_odds == 0:
+        return 0.0
+    if american_odds > 0:
+        b = american_odds / 100.0
+    else:
+        b = 100.0 / abs(american_odds)
+    q = 1.0 - probability
+    edge = b * probability - q
+    if edge <= 0.0:
+        return 0.0
+    return edge / b
+
+
+def _scenario_performance(
+    settlements: Sequence[Settlement],
+    stakes: Sequence[float],
+    *,
+    name: str,
+) -> ScenarioPerformance:
+    per_event_profits: list[float] = []
+    per_event_expected: list[float] = []
+    wins = 0
+    attempts = 0
+    cumulative = 0.0
+    peak = 0.0
+    drawdowns: list[float] = []
+
+    for settlement, stake in zip(settlements, stakes):
+        unit_stake = settlement.stake if settlement.stake != 0 else 1.0
+        scale = stake / unit_stake if stake else 0.0
+        win_profit = _payout(settlement.american_odds, 1.0, "win")
+        expected_unit = (
+            settlement.model_probability * win_profit
+            - (1.0 - settlement.model_probability) * 1.0
+        )
+        expected_value = expected_unit * scale
+        per_event_expected.append(expected_value)
+
+        actual_profit = settlement.pnl * scale
+        per_event_profits.append(actual_profit)
+
+        if stake > 0:
+            attempts += 1
+            if actual_profit > 0:
+                wins += 1
+
+        cumulative += actual_profit
+        peak = max(peak, cumulative)
+        drawdowns.append(peak - cumulative)
+
+    average_drawdown = statistics.fmean(drawdowns) if drawdowns else 0.0
+    max_drawdown = max(drawdowns, default=0.0)
+    hit_rate = wins / attempts if attempts else 0.0
+
+    return ScenarioPerformance(
+        name=name,
+        expected_value=sum(per_event_expected),
+        realized_pnl=sum(per_event_profits),
+        hit_rate=hit_rate,
+        wins=wins,
+        attempts=attempts,
+        average_drawdown=average_drawdown,
+        max_drawdown=max_drawdown,
+        per_event_profits=per_event_profits,
+        per_event_expected=per_event_expected,
+    )
+
+
+def _paired_t_test(differences: Sequence[float]) -> tuple[float | None, float | None]:
+    n = len(differences)
+    if n == 0:
+        return None, None
+    mean = statistics.fmean(differences)
+    variance = statistics.pvariance(differences, mu=mean) if n > 1 else 0.0
+    if variance == 0.0:
+        return 0.0, 1.0
+    standard_error = math.sqrt(variance / n)
+    if standard_error == 0.0:
+        return 0.0, 1.0
+    t_statistic = mean / standard_error
+    # Normal approximation for the two-sided p-value.
+    normal = statistics.NormalDist()
+    p_value = 2.0 * (1.0 - normal.cdf(abs(t_statistic)))
+    return t_statistic, p_value
+
+
+def _bootstrap_difference(
+    differences: Sequence[float],
+    *,
+    iterations: int,
+    seed: int | None,
+) -> float:
+    if not differences:
+        return 1.0
+    rng = random.Random(seed)
+    successes = 0
+    n = len(differences)
+    for _ in range(iterations):
+        sample = [differences[rng.randrange(n)] for _ in range(n)]
+        if sum(sample) >= 0:
+            successes += 1
+    return successes / iterations
+
+
+def _quantum_summary_table(comparison: QuantumScenarioComparison) -> pl.DataFrame:
+    baseline = comparison.baseline
+    quantum = comparison.quantum
+    difference = ScenarioPerformance(
+        name="difference",
+        expected_value=quantum.expected_value - baseline.expected_value,
+        realized_pnl=quantum.realized_pnl - baseline.realized_pnl,
+        hit_rate=quantum.hit_rate - baseline.hit_rate,
+        wins=quantum.wins - baseline.wins,
+        attempts=quantum.attempts - baseline.attempts,
+        average_drawdown=quantum.average_drawdown - baseline.average_drawdown,
+        max_drawdown=quantum.max_drawdown - baseline.max_drawdown,
+        per_event_profits=[
+            q - b for q, b in zip(quantum.per_event_profits, baseline.per_event_profits)
+        ],
+        per_event_expected=[
+            q - b for q, b in zip(quantum.per_event_expected, baseline.per_event_expected)
+        ],
+    )
+
+    records = []
+    for scenario in (baseline, quantum, difference):
+        records.append(
+            {
+                "scenario": scenario.name,
+                "expected_value": scenario.expected_value,
+                "realized_pnl": scenario.realized_pnl,
+                "hit_rate": scenario.hit_rate,
+                "wins": scenario.wins,
+                "attempts": scenario.attempts,
+                "average_drawdown": scenario.average_drawdown,
+                "max_drawdown": scenario.max_drawdown,
+            }
+        )
+    return pl.DataFrame(records)
+
+
+def _quantum_distribution_table(
+    comparison: QuantumScenarioComparison,
+) -> pl.DataFrame:
+    records = []
+    for index, value in enumerate(comparison.baseline.per_event_profits):
+        records.append({"scenario": "baseline", "event": index, "value": value})
+    for index, value in enumerate(comparison.quantum.per_event_profits):
+        records.append({"scenario": "quantum", "event": index, "value": value})
+    for index, value in enumerate(comparison.profit_differences):
+        records.append({"scenario": "difference", "event": index, "value": value})
+    return pl.DataFrame(records)
 

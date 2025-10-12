@@ -50,6 +50,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "hypothesis>=6.0.0",
     "ruff>=0.1.0",
+    "flake8>=7.0.0",
     "mypy>=1.5.0",
     "pre-commit>=3.0.0",
     "types-requests>=2.32.4.20250809",
@@ -69,6 +70,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "hypothesis>=6.0.0",
     "ruff>=0.1.0",
+    "flake8>=7.0.0",
     "mypy>=1.5.0",
     "pre-commit>=3.0.0",
     "types-requests>=2.32.4.20250809",
@@ -103,6 +105,8 @@ select = [
 ignore = [
     "E501", # line too long, handled by formatter
     "B008", # do not perform function calls in argument defaults
+    "UP006", # use builtin generics (legacy typing still in betting toolkit)
+    "UP037", # allow quoted annotations until type cleanup lands
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -113,6 +117,10 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -128,10 +136,6 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
-
-[[tool.mypy.overrides]]
-module = "nflreadpy.betting.*"
-follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = "nflreadpy.betting.models"

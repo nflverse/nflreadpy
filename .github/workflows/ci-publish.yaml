@@ -8,10 +8,43 @@ on:
 name: Publish package to PyPI
 
 jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+
+    name: Quality gate
+
+    env:
+      UV_PYTHON: "3.11"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          version: "0.8.17"
+
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
+      - name: Ruff check (betting)
+        run: uv run ruff check src/nflreadpy/betting
+
+      - name: Flake8 (betting)
+        run: uv run flake8 src/nflreadpy/betting
+
+      - name: MyPy (betting)
+        run: uv run mypy src/nflreadpy/betting
+
+      - name: Run test suite
+        run: uv run pytest tests -vv
+
   ci-publish:
     runs-on: ubuntu-latest
 
     name: Upload to PyPI
+    needs: quality-gate
 
     env:
       UV_PYTHON: "3.10"

@@ -4,6 +4,7 @@
 [![Dev status](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fgithub.com%2Fnflverse%2Fnflreadpy%2Fraw%2Fmain%2Fpyproject.toml&query=%24.project.version&prefix=v&style=flat-square&label=dev%20version
 )](https://nflreadpy.nflverse.com/)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg?style=flat-square)](https://lifecycle.r-lib.org/articles/stages.html)
+[![CI lint status](https://img.shields.io/github/actions/workflow/status/nflverse/nflreadpy/ci-test.yaml?logo=github&label=CI%20lint&style=flat-square&job=lint&branch=main)](https://github.com/nflverse/nflreadpy/actions/workflows/ci-test.yaml)
 [![CI test status](https://img.shields.io/github/actions/workflow/status/nflverse/nflreadpy/ci-test.yaml?label=CI%20tests&style=flat-square&logo=github)](https://github.com/nflverse/nflreadpy/actions)
 [![Coverage gate](https://img.shields.io/badge/coverage-%E2%89%A565%25-brightgreen?style=flat-square)](docs/betting/operations.md#coverage-gate)
 [![nflverse discord](https://img.shields.io/discord/789805604076126219?color=7289da&label=nflverse%20discord&logo=discord&logoColor=fff&style=flat-square)](https://discord.com/invite/5Er2FBnnQa)

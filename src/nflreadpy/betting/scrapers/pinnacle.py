@@ -6,14 +6,11 @@ import datetime as dt
 import logging
 from typing import Any, Dict, Iterable, List
 
-from ..normalization import default_normalizer
+from ..normalization import NameNormalizer, default_normalizer
 from .base import OddsQuote, SportsbookScraper, normalise_american_odds
 from .common import AsyncHTTPClient, RateLimiter
 
 logger = logging.getLogger(__name__)
-
-_NORMALIZER = default_normalizer()
-
 
 def _parse_timestamp(value: str | None) -> dt.datetime:
     if not value:
@@ -53,12 +50,14 @@ class PinnacleScraper(SportsbookScraper):
         client: AsyncHTTPClient | None = None,
         rate_limit_per_second: float | None = 1.0,
         headers: Dict[str, str] | None = None,
+        normalizer: NameNormalizer | None = None,
     ) -> None:
         super().__init__()
         self._endpoint = endpoint
         self._client = client or AsyncHTTPClient(timeout=self.timeout_seconds)
         self._rate_limiter = RateLimiter(rate_limit_per_second)
         self._headers = dict(headers or {})
+        self._normalizer = normalizer or default_normalizer()
 
     async def _fetch_lines_impl(self) -> List[OddsQuote]:
         await self._rate_limiter.wait()
@@ -125,11 +124,11 @@ class PinnacleScraper(SportsbookScraper):
                         extra["alt"] = alt
                     canonical_participant = str(participant)
                     if entity_type == "team":
-                        canonical_participant = _NORMALIZER.canonical_team(
+                        canonical_participant = self._normalizer.canonical_team(
                             canonical_participant
                         )
                     elif entity_type in {"player", "either", "leader"}:
-                        canonical_participant = _NORMALIZER.canonical_player(
+                        canonical_participant = self._normalizer.canonical_player(
                             canonical_participant
                         )
                     quotes.append(

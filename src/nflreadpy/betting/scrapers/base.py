@@ -15,6 +15,7 @@ import asyncio
 import dataclasses
 import datetime as dt
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import (
     Any,
@@ -157,20 +158,57 @@ class MultiScraperCoordinator:
     ) -> None:
         self.scrapers = list(scrapers)
         self.normalizer = normalizer or default_normalizer()
+        self._last_run_details: Dict[str, Dict[str, Any]] = {}
+
+    @property
+    def last_run_details(self) -> Mapping[str, Dict[str, Any]]:
+        """Return diagnostics from the most recent collection."""
+
+        return self._last_run_details
+
+    async def _run_scraper(
+        self, scraper: SportsbookScraper
+    ) -> Tuple[List[OddsQuote], Exception | None, float]:
+        start = time.perf_counter()
+        try:
+            quotes = await scraper.fetch_lines()
+            error: Exception | None = None
+        except Exception as err:  # pragma: no cover - defensive surface area
+            quotes = []
+            error = err
+        elapsed = time.perf_counter() - start
+        return quotes, error, elapsed
 
     async def collect_once(self) -> List[OddsQuote]:
         if not self.scrapers:
             return []
-        tasks = [asyncio.create_task(scraper.fetch_lines()) for scraper in self.scrapers]
+        tasks = {
+            asyncio.create_task(self._run_scraper(scraper)): scraper for scraper in self.scrapers
+        }
+        diagnostics: Dict[str, Dict[str, Any]] = {}
         results: List[OddsQuote] = []
-        for task in tasks:
+        for task, scraper in tasks.items():
             try:
-                quotes = await task
-            except Exception as err:  # pragma: no cover - defensive
-                logger.error("Scraper failure: %s", err)
+                quotes, error, elapsed = await task
+            except Exception as err:  # pragma: no cover - extremely defensive
+                logger.exception("Scraper %s raised unexpectedly", scraper.name)
+                diagnostics[scraper.name] = {
+                    "count": 0,
+                    "latency_seconds": 0.0,
+                    "error": str(err),
+                }
+                continue
+            diagnostics[scraper.name] = {
+                "count": len(quotes),
+                "latency_seconds": elapsed,
+                "error": str(error) if error else None,
+            }
+            if error:
+                logger.error("Scraper %s failed: %s", scraper.name, error)
                 continue
             for quote in quotes:
                 results.append(self.normalizer.normalise_quote(quote))
+        self._last_run_details = diagnostics
         return results
 
     async def collect_stream(self) -> Iterator[OddsQuote]:

@@ -59,6 +59,7 @@ class OddsIngestionService:
         normalizer: NameNormalizer | None = None,
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
         alert_sink: AlertSink | None = None,
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -68,6 +69,9 @@ class OddsIngestionService:
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
         self._stale_after = stale_after
         self._alert_sink = alert_sink
+        self._audit_logger = audit_logger or logging.getLogger(
+            "nflreadpy.betting.audit"
+        )
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
@@ -164,7 +168,15 @@ class OddsIngestionService:
         """Fetch odds from all scrapers and persist them."""
 
         start = time.perf_counter()
-        quotes = await self._coordinator.collect_once()
+        try:
+            quotes = await self._coordinator.collect_once()
+        except Exception as err:
+            self._send_alert(
+                "Odds ingestion failure",
+                "Failed to collect odds quotes from scrapers.",
+                metadata={"exception": repr(err)},
+            )
+            raise
         elapsed = time.perf_counter() - start
         per_scraper = {
             name: dict(details)
@@ -172,26 +184,26 @@ class OddsIngestionService:
         }
         self._maybe_alert_on_scraper_failures(per_scraper)
         if not quotes:
-            self._metrics = {
-                "requested": 0,
-                "persisted": 0,
-                "discarded": {},
-                "latency_seconds": elapsed,
-                "per_scraper": per_scraper,
-            }
+            self._update_metrics(
+                requested=0,
+                persisted=0,
+                discarded={},
+                latency_seconds=elapsed,
+                per_scraper=per_scraper,
+            )
             return []
 
         valid_quotes = self._filter_valid_quotes(quotes)
 
         if not valid_quotes:
             logger.info("All %d quotes discarded during validation", len(quotes))
-            self._metrics = {
-                "requested": len(quotes),
-                "persisted": 0,
-                "discarded": {"validation_failed": len(quotes)},
-                "latency_seconds": elapsed,
-                "per_scraper": per_scraper,
-            }
+            self._update_metrics(
+                requested=len(quotes),
+                persisted=0,
+                discarded={"validation_failed": len(quotes)},
+                latency_seconds=elapsed,
+                per_scraper=per_scraper,
+            )
             self._emit_validation_alert(len(quotes), self._last_validation_summary)
             return []
 
@@ -215,77 +227,85 @@ class OddsIngestionService:
             for quote in valid_quotes
         ]
 
-        with sqlite3.connect(self.storage_path) as conn:
-            conn.executemany(
-                """
-                INSERT INTO odds_quotes(
-                    event_id,
-                    sportsbook,
-                    book_market_group,
-                    market,
-                    scope,
-                    entity_type,
-                    team_or_player,
-                    side,
-                    line,
-                    side_key,
-                    line_key,
-                    american_odds,
-                    extra,
-                    observed_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(
-                    event_id,
-                    sportsbook,
-                    book_market_group,
-                    market,
-                    scope,
-                    entity_type,
-                    team_or_player,
-                    side_key,
-                    line_key
-                ) DO UPDATE SET
-                    american_odds=excluded.american_odds,
-                    extra=excluded.extra,
-                    observed_at=excluded.observed_at
-                """,
-                payload,
+        try:
+            with sqlite3.connect(self.storage_path) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO odds_quotes(
+                        event_id,
+                        sportsbook,
+                        book_market_group,
+                        market,
+                        scope,
+                        entity_type,
+                        team_or_player,
+                        side,
+                        line,
+                        side_key,
+                        line_key,
+                        american_odds,
+                        extra,
+                        observed_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(
+                        event_id,
+                        sportsbook,
+                        book_market_group,
+                        market,
+                        scope,
+                        entity_type,
+                        team_or_player,
+                        side_key,
+                        line_key
+                    ) DO UPDATE SET
+                        american_odds=excluded.american_odds,
+                        extra=excluded.extra,
+                        observed_at=excluded.observed_at
+                    """,
+                    payload,
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO odds_quotes_history(
+                        event_id,
+                        sportsbook,
+                        book_market_group,
+                        market,
+                        scope,
+                        entity_type,
+                        team_or_player,
+                        side,
+                        line,
+                        side_key,
+                        line_key,
+                        american_odds,
+                        extra,
+                        observed_at
+                    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    payload,
+                )
+                conn.commit()
+        except Exception as err:
+            self._send_alert(
+                "Odds ingestion failure",
+                "Failed to persist odds quotes to storage.",
+                metadata={"exception": repr(err)},
             )
-            conn.executemany(
-                """
-                INSERT INTO odds_quotes_history(
-                    event_id,
-                    sportsbook,
-                    book_market_group,
-                    market,
-                    scope,
-                    entity_type,
-                    team_or_player,
-                    side,
-                    line,
-                    side_key,
-                    line_key,
-                    american_odds,
-                    extra,
-                    observed_at
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                payload,
-            )
-            conn.commit()
+            raise
         self._audit_logger.info(
             "ingestion.persisted",
             extra={"persisted": len(valid_quotes), "requested": len(quotes)},
         )
 
         discarded_summary = self._last_validation_summary
-        self._metrics = {
-            "requested": len(quotes),
-            "persisted": len(valid_quotes),
-            "discarded": discarded_summary,
-            "latency_seconds": elapsed,
-            "per_scraper": per_scraper,
-        }
+        self._update_metrics(
+            requested=len(quotes),
+            persisted=len(valid_quotes),
+            discarded=discarded_summary,
+            latency_seconds=elapsed,
+            per_scraper=per_scraper,
+        )
         if discarded_summary:
             self._emit_validation_alert(len(quotes), discarded_summary)
         logger.info(
@@ -322,6 +342,15 @@ class OddsIngestionService:
                 valid.append(quote)
             else:
                 summary[reason] = summary.get(reason, 0) + 1
+                self._audit_logger.warning(
+                    "ingestion.discarded",
+                    extra={
+                        "reason": reason,
+                        "sportsbook": quote.sportsbook,
+                        "market": quote.market,
+                        "event_id": quote.event_id,
+                    },
+                )
                 logger.debug(
                     "Discarding quote from %s/%s (%s): %s",
                     quote.sportsbook,
@@ -331,8 +360,39 @@ class OddsIngestionService:
                 )
         self._last_validation_summary = dict(summary)
         if summary:
+            self._audit_logger.warning(
+                "ingestion.validation_failed", extra={"discarded": dict(summary)}
+            )
             logger.warning("Discarded quotes summary: %s", summary)
         return valid
+
+    def _update_metrics(
+        self,
+        *,
+        requested: int,
+        persisted: int,
+        discarded: Mapping[str, int],
+        latency_seconds: float,
+        per_scraper: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        metrics_snapshot = {
+            "requested": requested,
+            "persisted": persisted,
+            "discarded": dict(discarded),
+            "latency_seconds": latency_seconds,
+            "per_scraper": {name: dict(details) for name, details in per_scraper.items()},
+        }
+        self._metrics = metrics_snapshot
+        self._audit_logger.info(
+            "ingestion.metrics",
+            extra={
+                "requested": requested,
+                "persisted": persisted,
+                "discarded": dict(discarded),
+                "latency_seconds": latency_seconds,
+                "per_scraper": metrics_snapshot["per_scraper"],
+            },
+        )
 
     def _validate_quote(
         self, quote: OddsQuote, reference_time: dt.datetime

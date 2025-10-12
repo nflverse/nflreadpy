@@ -4,3 +4,4 @@ event_id,sportsbook,book_market_group,market,scope,entity_type,team_or_player,si
 2024-NE-NYJ,testbook,Game Lines,total,game,total,Total,over,41.5,-108,2024-09-01T10:00:00+00:00,0.52,NE,NYJ,24,17,1.0,-105,41.0
 2024-DAL-PHI,testbook,Game Lines,moneyline,game,team,PHI,,,+110,2024-09-15T10:00:00+00:00,0.47,DAL,PHI,20,27,1.0,105,
 2024-DAL-PHI,testbook,Game Lines,spread,game,team,PHI,dog,2.5,-105,2024-09-15T10:00:00+00:00,0.51,DAL,PHI,20,27,1.0,-110,2.0
+2024-CHI-GB,testbook,Game Lines,spread,game,team,CHI,fav,-3.0,-110,2024-09-22T10:00:00+00:00,0.56,CHI,GB,27,24,1.0,-110,-3.0

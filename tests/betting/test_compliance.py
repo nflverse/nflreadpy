@@ -168,9 +168,14 @@ def test_config_from_env_parses_credentials(monkeypatch: pytest.MonkeyPatch) -> 
         "NFLREADPY_COMPLIANCE_CREDENTIALS_AVAILABLE",
         "book:session_token",
     )
+    monkeypatch.setenv(
+        "NFLREADPY_COMPLIANCE_REQUIRED_METADATA_FIELDS",
+        "jurisdictions,market_rules",
+    )
     config = ComplianceConfig.from_env()
     assert config.credential_requirements["book"] == {"session_token", "account_id"}
     assert config.credentials_available["book"] == {"session_token"}
+    assert config.required_metadata_fields == {"jurisdictions", "market_rules"}
 
 
 def test_config_from_mapping_handles_yaml_payload() -> None:
@@ -180,6 +185,7 @@ def test_config_from_mapping_handles_yaml_payload() -> None:
         "banned_sportsbooks": ["OffshoreBook"],
         "credential_requirements": {"FanDuel": ["session_token"]},
         "credentials_available": {"FanDuel": ["Session_Token"]},
+        "required_metadata_fields": ["Jurisdictions", "Market_Rules"],
     }
     config = ComplianceConfig.from_mapping(payload)
     assert config.allowed_push_handling == {"push", "refund"}
@@ -187,13 +193,16 @@ def test_config_from_mapping_handles_yaml_payload() -> None:
     assert config.banned_sportsbooks == {"offshorebook"}
     assert config.credential_requirements["fanduel"] == {"session_token"}
     assert config.credentials_available["fanduel"] == {"session_token"}
+    assert config.required_metadata_fields == {"Jurisdictions", "Market_Rules"}
 
 
 def test_evaluate_metadata_returns_reasons(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     logger = logging.getLogger("test.audit.metadata")
-    config = ComplianceConfig(jurisdiction_allowlist={"co"})
+    config = ComplianceConfig(
+        jurisdiction_allowlist={"co"}, required_metadata_fields={"jurisdictions"}
+    )
     engine = ComplianceEngine(config, audit_logger=logger)
 
     caplog.set_level(logging.WARNING, logger="test.audit.metadata")
@@ -208,4 +217,32 @@ def test_evaluate_metadata_returns_reasons(
     assert reasons
     assert any(
         rec.getMessage() == "compliance.violation" for rec in caplog.records
+    )
+
+
+def test_required_metadata_fields_trigger_violation(
+    caplog: pytest.LogCaptureFixture, opportunity_template: dict
+) -> None:
+    logger = logging.getLogger("test.audit.metadata_required")
+    config = ComplianceConfig(required_metadata_fields={"jurisdictions"})
+    engine = ComplianceEngine(config, audit_logger=logger)
+    manager = PortfolioManager(
+        bankroll=100.0,
+        max_risk_per_bet=0.1,
+        max_event_exposure=0.5,
+        compliance_engine=engine,
+        audit_logger=logger,
+    )
+
+    caplog.set_level(logging.WARNING, logger="test.audit.metadata_required")
+    opportunity = Opportunity(**{**opportunity_template, "extra": {}})
+    result = manager.allocate(opportunity)
+    assert result is None
+    violations = [
+        rec for rec in caplog.records if rec.getMessage() == "compliance.violation"
+    ]
+    assert violations
+    assert any(
+        "metadata_missing=jurisdictions" in ",".join(getattr(rec, "reasons", []))
+        for rec in violations
     )

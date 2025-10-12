@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
+import json
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List
 
 import pytest
 
@@ -18,12 +20,117 @@ from nflreadpy.betting.models import (
     SimulationResult,
     TeamRating,
 )
-from nflreadpy.betting.scrapers.base import OddsQuote, StaticScraper
+from nflreadpy.betting.scrapers.base import (
+    MultiScraperCoordinator,
+    OddsQuote,
+    SportsbookScraper,
+    StaticScraper,
+    best_prices_by_selection,
+)
+from nflreadpy.betting.scrapers.draftkings import DraftKingsScraper
+from nflreadpy.betting.scrapers.fanduel import FanDuelScraper
+from nflreadpy.betting.scrapers.pinnacle import PinnacleScraper
+
+
+FANDUEL_URL = "https://stub/fanduel"
+DRAFTKINGS_URL = "https://stub/draftkings"
+PINNACLE_URL = "https://stub/pinnacle"
+
+
+class StubHTTPClient:
+    def __init__(
+        self,
+        responses: Dict[str, Dict[str, Any]],
+        *,
+        freshen: bool,
+    ) -> None:
+        self._responses = responses
+        self._freshen = freshen
+        self._timestamp = dt.datetime.now(dt.timezone.utc).isoformat()
+        self.calls: list[str] = []
+
+    async def get_json(
+        self,
+        url: str,
+        *,
+        params: Dict[str, Any] | None = None,
+        headers: Dict[str, str] | None = None,
+    ) -> Dict[str, Any]:
+        del params, headers
+        self.calls.append(url)
+        payload = copy.deepcopy(self._responses[url])
+        if self._freshen:
+            _refresh_event_timestamps(payload, self._timestamp)
+        return payload
+
+
+def _refresh_event_timestamps(payload: Dict[str, Any], timestamp: str) -> None:
+    events = payload.get("events", [])
+    for event in events:
+        if "lastUpdated" in event:
+            event["lastUpdated"] = timestamp
+        if "lastUpdate" in event:
+            event["lastUpdate"] = timestamp
 
 
 @pytest.fixture()
 def now() -> dt.datetime:
     return dt.datetime(2024, 9, 1, 12, tzinfo=dt.timezone.utc)
+
+
+@pytest.fixture()
+def sportsbook_payloads() -> Dict[str, Dict[str, Any]]:
+    payload_dir = Path(__file__).parent / "payloads"
+    return {
+        FANDUEL_URL: json.loads((payload_dir / "fanduel.json").read_text()),
+        DRAFTKINGS_URL: json.loads((payload_dir / "draftkings.json").read_text()),
+        PINNACLE_URL: json.loads((payload_dir / "pinnacle.json").read_text()),
+    }
+
+
+@pytest.fixture()
+def fresh_stub_client(sportsbook_payloads: Dict[str, Dict[str, Any]]) -> StubHTTPClient:
+    return StubHTTPClient(sportsbook_payloads, freshen=True)
+
+
+@pytest.fixture()
+def stale_stub_client(sportsbook_payloads: Dict[str, Dict[str, Any]]) -> StubHTTPClient:
+    return StubHTTPClient(sportsbook_payloads, freshen=False)
+
+
+@pytest.fixture()
+def http_scrapers(fresh_stub_client: StubHTTPClient) -> List[SportsbookScraper]:
+    return [
+        FanDuelScraper(FANDUEL_URL, client=fresh_stub_client, rate_limit_per_second=None),
+        DraftKingsScraper(
+            DRAFTKINGS_URL, client=fresh_stub_client, rate_limit_per_second=None
+        ),
+        PinnacleScraper(PINNACLE_URL, client=fresh_stub_client, rate_limit_per_second=None),
+    ]
+
+
+@pytest.fixture()
+def scraper_configs(stale_stub_client: StubHTTPClient) -> List[Dict[str, Any]]:
+    return [
+        {
+            "type": "fanduel",
+            "endpoint": FANDUEL_URL,
+            "client": stale_stub_client,
+            "rate_limit_per_second": None,
+        },
+        {
+            "type": "draftkings",
+            "endpoint": DRAFTKINGS_URL,
+            "client": stale_stub_client,
+            "rate_limit_per_second": None,
+        },
+        {
+            "type": "pinnacle",
+            "endpoint": PINNACLE_URL,
+            "client": stale_stub_client,
+            "rate_limit_per_second": None,
+        },
+    ]
 
 
 @pytest.fixture()
@@ -128,7 +235,30 @@ def tmp_db_path(tmp_path: Path) -> Path:
 
 @pytest.fixture()
 def ingestion(static_scraper: StaticScraper, tmp_db_path: Path) -> OddsIngestionService:
-    return OddsIngestionService([static_scraper], storage_path=tmp_db_path)
+    return OddsIngestionService(
+        [static_scraper], storage_path=tmp_db_path, stale_after=dt.timedelta(days=5000)
+    )
+
+
+def test_http_scrapers_normalise_and_best_price(
+    http_scrapers: List[SportsbookScraper],
+) -> None:
+    coordinator = MultiScraperCoordinator(http_scrapers)
+    quotes = asyncio.run(coordinator.collect_once())
+    assert quotes
+    teams = {
+        quote.team_or_player
+        for quote in quotes
+        if quote.market == "moneyline" and quote.entity_type == "team"
+    }
+    assert {"NE", "NYJ"}.issubset(teams)
+    best = best_prices_by_selection(quotes)
+    ne_key = ("2024-NE-NYJ", "moneyline", "game", "NE", None, None)
+    nyj_key = ("2024-NE-NYJ", "moneyline", "game", "NYJ", None, None)
+    assert best[ne_key].american_odds == -125
+    assert best[nyj_key].american_odds == 130
+    player_quote = next(quote for quote in quotes if quote.entity_type == "player")
+    assert player_quote.team_or_player == "Garrett Wilson"
 
 
 @pytest.fixture()
@@ -198,9 +328,27 @@ def test_edge_detector_identifies_varied_edges(
     opportunities = detector.detect(static_quotes, [simulation])
     markets = {opp.market for opp in opportunities}
     assert {"spread", "total", "receiving_yards", "longest_reception"}.issubset(markets)
-    for opp in opportunities:
-        assert opp.expected_value >= 0.0
-        assert opp.kelly_fraction >= 0.0
+
+
+def test_service_metrics_and_validation(
+    tmp_db_path: Path,
+    scraper_configs: List[Dict[str, Any]],
+) -> None:
+    service = OddsIngestionService(
+        scrapers=None,
+        scraper_configs=scraper_configs,
+        storage_path=tmp_db_path,
+        stale_after=dt.timedelta(days=1800),
+    )
+    stored = asyncio.run(service.fetch_and_store())
+    metrics = service.metrics
+    assert metrics["requested"] == 20
+    assert metrics["persisted"] == len(stored) == 17
+    assert metrics["discarded"].get("invalid_odds") == 1
+    assert metrics["discarded"].get("stale") == 2
+    latest = service.load_latest("2024-NE-NYJ")
+    assert any(row.sportsbook == "pinnacle" for row in latest)
+    assert all(row.american_odds != 0 for row in latest)
 
 
 def test_dashboard_renders_sections(

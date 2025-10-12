@@ -126,6 +126,11 @@ class NameNormalizer:
         slug = _slug(value)
         if slug in self.team_aliases:
             return self.team_aliases[slug]
+        parts = value.split()
+        if parts:
+            last_slug = _slug(parts[-1])
+            if last_slug in self.team_aliases:
+                return self.team_aliases[last_slug]
         if len(value) <= 4:
             return value.upper()
         return value.title()

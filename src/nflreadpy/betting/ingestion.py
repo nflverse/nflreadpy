@@ -7,15 +7,26 @@ import dataclasses
 import datetime as dt
 import json
 import logging
+import math
 import os
 import sqlite3
 from pathlib import Path
-from typing import List, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence
 
 from .normalization import NameNormalizer, default_normalizer
 from .scrapers.base import MultiScraperCoordinator, OddsQuote, SportsbookScraper
+from .scrapers.draftkings import DraftKingsScraper
+from .scrapers.fanduel import FanDuelScraper
+from .scrapers.pinnacle import PinnacleScraper
 
 logger = logging.getLogger(__name__)
+
+
+SCRAPER_REGISTRY: Mapping[str, type[SportsbookScraper]] = {
+    "fanduel": FanDuelScraper,
+    "draftkings": DraftKingsScraper,
+    "pinnacle": PinnacleScraper,
+}
 
 
 @dataclasses.dataclass(slots=True)
@@ -39,16 +50,48 @@ class OddsIngestionService:
 
     def __init__(
         self,
-        scrapers: Sequence[SportsbookScraper],
+        scrapers: Sequence[SportsbookScraper] | None = None,
+        *,
+        scraper_configs: Sequence[Mapping[str, Any]] | None = None,
         storage_path: str | os.PathLike[str] = "betting_odds.sqlite3",
         normalizer: NameNormalizer | None = None,
+        stale_after: dt.timedelta = dt.timedelta(minutes=10),
     ) -> None:
-        self.scrapers = list(scrapers)
+        self.scrapers = list(scrapers or [])
+        self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._normalizer = normalizer or default_normalizer()
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
+        self._stale_after = stale_after
+        self._metrics: Dict[str, Any] = {
+            "requested": 0,
+            "persisted": 0,
+            "discarded": {},
+        }
+        self._last_validation_summary: Dict[str, int] = {}
         self._init_db()
+
+    @property
+    def metrics(self) -> Mapping[str, Any]:
+        return self._metrics
+
+    def _instantiate_scrapers(
+        self, scraper_configs: Sequence[Mapping[str, Any]] | None
+    ) -> List[SportsbookScraper]:
+        if not scraper_configs:
+            return []
+        instances: List[SportsbookScraper] = []
+        for config in scraper_configs:
+            scraper_type = config.get("type")
+            if not scraper_type:
+                raise ValueError("Scraper config missing 'type'")
+            scraper_cls = SCRAPER_REGISTRY.get(str(scraper_type).lower())
+            if not scraper_cls:
+                raise ValueError(f"Unknown scraper type: {scraper_type}")
+            kwargs = {key: value for key, value in config.items() if key != "type"}
+            instances.append(scraper_cls(**kwargs))
+        return instances
 
     def _init_db(self) -> None:
         with sqlite3.connect(self.storage_path) as conn:
@@ -112,6 +155,18 @@ class OddsIngestionService:
 
         quotes = await self._coordinator.collect_once()
         if not quotes:
+            self._metrics = {"requested": 0, "persisted": 0, "discarded": {}}
+            return []
+
+        valid_quotes = self._filter_valid_quotes(quotes)
+
+        if not valid_quotes:
+            logger.info("All %d quotes discarded during validation", len(quotes))
+            self._metrics = {
+                "requested": len(quotes),
+                "persisted": 0,
+                "discarded": {"validation_failed": len(quotes)},
+            }
             return []
 
         payload = [
@@ -131,7 +186,7 @@ class OddsIngestionService:
                 json.dumps(quote.extra or {}, sort_keys=True),
                 quote.observed_at.isoformat(),
             )
-            for quote in quotes
+            for quote in valid_quotes
         ]
 
         with sqlite3.connect(self.storage_path) as conn:
@@ -193,7 +248,18 @@ class OddsIngestionService:
             )
             conn.commit()
 
-        logger.info("Stored %d odds quotes", len(payload))
+        discarded_summary = self._last_validation_summary
+        self._metrics = {
+            "requested": len(quotes),
+            "persisted": len(valid_quotes),
+            "discarded": discarded_summary,
+        }
+        logger.info(
+            "Stored %d odds quotes (%d discarded: %s)",
+            len(valid_quotes),
+            len(quotes) - len(valid_quotes),
+            discarded_summary,
+        )
         return [
             IngestedOdds(
                 event_id=quote.event_id,
@@ -209,8 +275,41 @@ class OddsIngestionService:
                 observed_at=quote.observed_at,
                 extra=dict(quote.extra or {}),
             )
-            for quote in quotes
+            for quote in valid_quotes
         ]
+
+    def _filter_valid_quotes(self, quotes: Iterable[OddsQuote]) -> List[OddsQuote]:
+        now = dt.datetime.now(dt.timezone.utc)
+        valid: List[OddsQuote] = []
+        summary: MutableMapping[str, int] = {}
+        for quote in quotes:
+            reason = self._validate_quote(quote, now)
+            if reason is None:
+                valid.append(quote)
+            else:
+                summary[reason] = summary.get(reason, 0) + 1
+        self._last_validation_summary = dict(summary)
+        if summary:
+            logger.debug("Discarded quotes summary: %s", summary)
+        return valid
+
+    def _validate_quote(
+        self, quote: OddsQuote, reference_time: dt.datetime
+    ) -> str | None:
+        if quote.american_odds == 0:
+            return "invalid_odds"
+        if not isinstance(quote.american_odds, int):
+            return "invalid_odds"
+        if quote.line is not None and not isinstance(quote.line, (int, float)):
+            return "invalid_line"
+        if isinstance(quote.line, float) and not math.isfinite(quote.line):
+            return "invalid_line"
+        observed = quote.observed_at
+        if observed.tzinfo is None:
+            observed = observed.replace(tzinfo=dt.timezone.utc)
+        if observed < reference_time - self._stale_after:
+            return "stale"
+        return None
 
     def load_latest(self, event_id: str | None = None) -> List[IngestedOdds]:
         """Load the latest stored odds from disk."""

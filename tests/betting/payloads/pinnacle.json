@@ -1,0 +1,100 @@
+{
+  "events": [
+    {
+      "id": "2024-NE-NYJ",
+      "lastUpdated": "2024-09-01T12:10:00+00:00",
+      "markets": [
+        {
+          "id": "pn-ml-2024-NE-NYJ",
+          "group": "Game Lines",
+          "type": "moneyline",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "pn-ml-ne",
+              "name": "New England Patriots",
+              "moneyline": "-128"
+            },
+            {
+              "id": "pn-ml-nyj",
+              "name": "New York Jets",
+              "moneyline": "+130"
+            }
+          ]
+        },
+        {
+          "id": "pn-spread-2024-NE-NYJ",
+          "group": "Game Lines",
+          "type": "spread",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "pn-spread-ne",
+              "name": "New England Patriots",
+              "moneyline": "-104",
+              "handicap": "-3.0",
+              "side": "fav"
+            },
+            {
+              "id": "pn-spread-nyj",
+              "name": "New York Jets",
+              "moneyline": "0",
+              "handicap": "+3.0",
+              "side": "dog"
+            }
+          ]
+        },
+        {
+          "id": "pn-total-2024-NE-NYJ",
+          "group": "Game Lines",
+          "type": "total",
+          "scope": "game",
+          "entityType": "total",
+          "outcomes": [
+            {
+              "id": "pn-total-over",
+              "name": "Over",
+              "moneyline": "-105",
+              "points": "41.5",
+              "side": "over"
+            },
+            {
+              "id": "pn-total-under",
+              "name": "Under",
+              "moneyline": "+102",
+              "points": "41.5",
+              "side": "under"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "2024-DEN-KC",
+      "lastUpdated": "1999-01-01T00:00:00+00:00",
+      "markets": [
+        {
+          "id": "pn-ml-2024-DEN-KC",
+          "group": "Game Lines",
+          "type": "moneyline",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "pn-ml-den",
+              "name": "Denver Broncos",
+              "moneyline": "+210"
+            },
+            {
+              "id": "pn-ml-kc",
+              "name": "Kansas City Chiefs",
+              "moneyline": "-230"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

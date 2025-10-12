@@ -68,6 +68,39 @@ def test_compliance_rejects_and_logs(caplog: pytest.LogCaptureFixture, opportuni
     )
 
 
+def test_compliance_rejects_missing_credentials(
+    caplog: pytest.LogCaptureFixture, opportunity_template: dict
+) -> None:
+    logger = logging.getLogger("test.audit.creds")
+    config = ComplianceConfig(
+        allowed_push_handling={"push"},
+        credential_requirements={"book": {"session_token"}},
+    )
+    engine = ComplianceEngine(config, audit_logger=logger)
+    manager = PortfolioManager(
+        bankroll=100.0,
+        max_risk_per_bet=0.1,
+        max_event_exposure=0.5,
+        compliance_engine=engine,
+        audit_logger=logger,
+    )
+
+    caplog.set_level(logging.WARNING, logger="test.audit.creds")
+    opportunity = Opportunity(**opportunity_template)
+    result = manager.allocate(opportunity)
+    assert result is None
+    violations = [
+        rec
+        for rec in caplog.records
+        if rec.getMessage() == "compliance.violation"
+    ]
+    assert violations
+    assert any(
+        "credentials_missing" in ",".join(getattr(rec, "reasons", []))
+        for rec in violations
+    )
+
+
 def test_session_loss_limit_triggers_cooldown(caplog: pytest.LogCaptureFixture, opportunity_template: dict) -> None:
     logger = logging.getLogger("test.audit.loss")
     controls = ResponsibleGamingControls(session_loss_limit=10.0, cooldown_seconds=30.0)
@@ -113,3 +146,17 @@ def test_session_stake_limit_blocks_allocation(caplog: pytest.LogCaptureFixture,
         rec.getMessage() == "portfolio.rejected" and getattr(rec, "reason", "") == "session_stake_limit"
         for rec in caplog.records
     )
+
+
+def test_config_from_env_parses_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "NFLREADPY_COMPLIANCE_REQUIRED_CREDENTIALS",
+        '{"book": ["session_token", "account_id"]}',
+    )
+    monkeypatch.setenv(
+        "NFLREADPY_COMPLIANCE_CREDENTIALS_AVAILABLE",
+        "book:session_token",
+    )
+    config = ComplianceConfig.from_env()
+    assert config.credential_requirements["book"] == {"session_token", "account_id"}
+    assert config.credentials_available["book"] == {"session_token"}

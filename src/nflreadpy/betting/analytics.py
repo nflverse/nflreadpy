@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import Dict, List, Mapping, Sequence, Tuple
 
 from .alerts import AlertManager, get_alert_manager
+from .compliance import ComplianceEngine, ResponsibleGamingControls
 from .models import (
     PlayerPropForecaster,
     ProbabilityTriple,

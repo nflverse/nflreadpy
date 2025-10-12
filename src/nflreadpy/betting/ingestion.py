@@ -56,6 +56,7 @@ class OddsIngestionService:
         storage_path: str | os.PathLike[str] = "betting_odds.sqlite3",
         normalizer: NameNormalizer | None = None,
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -64,6 +65,7 @@ class OddsIngestionService:
         self._normalizer = normalizer or default_normalizer()
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
         self._stale_after = stale_after
+        self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
@@ -75,6 +77,10 @@ class OddsIngestionService:
     @property
     def metrics(self) -> Mapping[str, Any]:
         return self._metrics
+
+    @property
+    def last_validation_summary(self) -> Mapping[str, int]:
+        return dict(self._last_validation_summary)
 
     def _instantiate_scrapers(
         self, scraper_configs: Sequence[Mapping[str, Any]] | None
@@ -167,6 +173,14 @@ class OddsIngestionService:
                 "persisted": 0,
                 "discarded": {"validation_failed": len(quotes)},
             }
+            if quotes:
+                self._audit_logger.warning(
+                    "ingestion.validation_failed",
+                    extra={
+                        "total": len(quotes),
+                        "summary": dict(self._last_validation_summary),
+                    },
+                )
             return []
 
         payload = [
@@ -247,6 +261,10 @@ class OddsIngestionService:
                 payload,
             )
             conn.commit()
+        self._audit_logger.info(
+            "ingestion.persisted",
+            extra={"persisted": len(valid_quotes), "requested": len(quotes)},
+        )
 
         discarded_summary = self._last_validation_summary
         self._metrics = {
@@ -288,6 +306,15 @@ class OddsIngestionService:
                 valid.append(quote)
             else:
                 summary[reason] = summary.get(reason, 0) + 1
+                self._audit_logger.warning(
+                    "ingestion.discarded",
+                    extra={
+                        "reason": reason,
+                        "sportsbook": quote.sportsbook,
+                        "event_id": quote.event_id,
+                        "market": quote.market,
+                    },
+                )
         self._last_validation_summary = dict(summary)
         if summary:
             logger.debug("Discarded quotes summary: %s", summary)

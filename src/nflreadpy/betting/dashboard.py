@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import shlex
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from .analytics import Opportunity
@@ -30,6 +31,15 @@ from .dashboard_core import (
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 from .scrapers.base import american_to_decimal
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardHotkey:
+    """Describe a hotkey binding shared between terminal surfaces."""
+
+    key: str
+    command: str
+    description: str
 
 
 # Backwards compatibility aliases for historical private imports
@@ -83,6 +93,7 @@ class Dashboard:
             "ladders": DashboardPanelState("ladders", "Line Ladders"),
             "search": DashboardPanelState("search", "Search Results"),
         }
+        self._hotkeys: tuple[DashboardHotkey, ...] | None = None
 
     # ------------------------------------------------------------------
     # Interaction helpers
@@ -159,6 +170,29 @@ class Dashboard:
         scopes = updates.pop("scopes")
         self.filters = self.filters.update(scopes=scopes, **updates)
         return self.filters
+
+    # ------------------------------------------------------------------
+    # Hotkey bindings
+    # ------------------------------------------------------------------
+    def hotkey_bindings(self) -> tuple[DashboardHotkey, ...]:
+        """Return the default hotkey bindings used by terminal interfaces."""
+
+        if self._hotkeys is None:
+            self._hotkeys = (
+                DashboardHotkey("s", "show", "Render the dashboard using current filters."),
+                DashboardHotkey("f", "filter", "Apply filter tokens (append key=value arguments)."),
+                DashboardHotkey("/", "search", "Apply a search query across panels."),
+                DashboardHotkey("n", "clear search", "Clear the active search query."),
+                DashboardHotkey("c", "reset", "Reset filters and search state."),
+                DashboardHotkey("q", "toggle quarters", "Toggle quarter markets."),
+                DashboardHotkey("h", "toggle halves", "Toggle half markets."),
+                DashboardHotkey("g", "scope game", "Apply the game-only scope preset."),
+                DashboardHotkey("m", "scope main", "Apply the main scope preset (game + halves)."),
+                DashboardHotkey("a", "scope all", "Show all scopes, including quarters."),
+                DashboardHotkey("l", "toggle panel ladders", "Collapse or expand the ladder panel."),
+                DashboardHotkey("o", "toggle panel opportunities", "Collapse or expand the opportunities panel."),
+            )
+        return self._hotkeys
 
     # ------------------------------------------------------------------
     # Rendering
@@ -506,6 +540,9 @@ class TerminalDashboardSession:
 
     def __init__(self, dashboard: Dashboard | None = None) -> None:
         self.dashboard = dashboard or Dashboard()
+        self._hotkey_map: dict[str, DashboardHotkey] = {
+            binding.key: binding for binding in self.dashboard.hotkey_bindings()
+        }
 
     @property
     def panels(self) -> Sequence[str]:
@@ -548,6 +585,10 @@ class TerminalDashboardSession:
             return self._panel(args)
         if action == "scope":
             return self._scope(args)
+        if action == "hotkeys":
+            return self._hotkey_help()
+        if action == "hotkey":
+            return self._hotkey(args, odds, simulations, opportunities)
         return f"Unknown command: {action}. Type 'help' for available commands."
 
     # ------------------------------------------------------------------
@@ -564,6 +605,8 @@ class TerminalDashboardSession:
             "  scope <preset>                  Apply scope preset (all, game, main)\n"
             "  order panel1,panel2,...        Reorder panels\n"
             "  panels                          List available panels\n"
+            "  hotkeys                        Show available hotkeys\n"
+            "  hotkey <key> [args...]         Dispatch a hotkey binding\n"
             "  reset                           Reset filters and search"
         )
 
@@ -649,4 +692,30 @@ class TerminalDashboardSession:
         except KeyError as exc:
             return str(exc)
         return f"Scope preset '{preset}' applied."
+
+    def _hotkey(
+        self,
+        args: Sequence[str],
+        odds: Sequence[IngestedOdds],
+        simulations: Sequence[SimulationResult],
+        opportunities: Sequence[Opportunity],
+    ) -> str:
+        if not args:
+            return self._hotkey_help()
+        key = args[0]
+        binding = self._hotkey_map.get(key)
+        if binding is None:
+            return f"Unknown hotkey '{key}'. Type 'hotkeys' to list bindings."
+        command = binding.command
+        if len(args) > 1:
+            command = " ".join((command, *args[1:]))
+        return self.handle(command, odds, simulations, opportunities)
+
+    def _hotkey_help(self) -> str:
+        bindings = sorted(self._hotkey_map.values(), key=lambda item: item.key)
+        lines = ["Hotkey bindings:"]
+        for binding in bindings:
+            lines.append(f"  {binding.key} -> {binding.command} — {binding.description}")
+        lines.append("Use 'hotkey <key>' (optionally followed by arguments) to invoke a binding.")
+        return "\n".join(lines)
 

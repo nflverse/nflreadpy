@@ -55,6 +55,10 @@ The interpreter understands the following commands:
   (`all`, `game`, or `main` which keeps first/second half markets but hides
   quarters).
 - `order controls,quotes,...` — customise the panel ordering.
+- `hotkeys` — list the key bindings shared with the curses UI.
+- `hotkey <key> [args...]` — invoke a binding directly from the interpreter
+  (for example `hotkey q` toggles quarter markets, while
+  `hotkey / Kansas City` runs `search Kansas City`).
 - `reset` — clear filters and the search state.
 
 ### Launching the curses interface
@@ -73,10 +77,12 @@ The curses UI supports the following keys:
 - `f` — open an inline prompt for filter expressions
   (e.g. `sportsbooks=FanDuel markets=spread`).
 - `/` — open the search prompt (the query is shared with the command
-  interpreter and the Streamlit dashboard).
+  interpreter and the Streamlit dashboard, so `hotkey / ...` works in both
+  surfaces).
 - `Q` / `H` — toggle quarter and half scopes respectively.
 - `g` / `m` / `a` — jump to the `game`, `main`, or `all` scope presets without
   visiting the filter prompt.
+- `l` / `o` — collapse or expand the ladder and opportunity panels.
 - `c` — reset filters to their defaults.
 - `n` — clear the search query.
 - `r` — force a data refresh immediately.

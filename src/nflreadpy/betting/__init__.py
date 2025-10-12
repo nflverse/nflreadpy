@@ -32,7 +32,13 @@ from .compliance import (
     ComplianceEngine,
     ResponsibleGamingControls,
 )
-from .dashboard import Dashboard, DashboardSnapshot, RiskSummary, TerminalDashboardSession
+from .dashboard import (
+    Dashboard,
+    DashboardHotkey,
+    DashboardSnapshot,
+    RiskSummary,
+    TerminalDashboardSession,
+)
 from .dashboard_core import DashboardFilters, DashboardSearchState
 from .dashboard_tui import DashboardKeyboardController, run_curses_dashboard
 from .ingestion import OddsIngestionService
@@ -77,6 +83,7 @@ __all__ = [
     "AlertManager",
     "Dashboard",
     "DashboardKeyboardController",
+    "DashboardHotkey",
     "DashboardFilters",
     "DashboardSnapshot",
     "DashboardSearchState",

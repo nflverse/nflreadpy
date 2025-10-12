@@ -13,10 +13,8 @@ from nflreadpy.betting import (
 )
 from nflreadpy.betting.analytics import KellyCriterion, Opportunity, PortfolioPosition
 from nflreadpy.betting.ingestion import IngestedOdds
-from nflreadpy.betting.scrapers.base import (
-    MultiScraperCoordinator,
-    OddsQuote,
-    StaticScraper,
+from nflreadpy.betting.scrapers.base import MultiScraperCoordinator, OddsQuote, StaticScraper
+from nflreadpy.betting.utils import (
     american_to_decimal,
     american_to_fractional,
     decimal_to_american,
@@ -152,6 +150,18 @@ def test_kelly_fraction_from_implied_probability_matches_decimal() -> None:
     assert implied_fraction == pytest.approx(decimal_fraction)
 
 
+def test_kelly_instance_applies_configured_defaults() -> None:
+    criterion = KellyCriterion(fractional_kelly=0.4, cap=0.15)
+    via_callable = criterion(0.6, 0.4, +110)
+    expected = KellyCriterion.fraction(0.6, 0.4, +110, fractional_kelly=0.4, cap=0.15)
+    assert via_callable == pytest.approx(expected)
+    assert criterion.last_fraction == pytest.approx(via_callable)
+    updated = criterion.with_fractional_kelly(0.25)
+    assert updated.fractional_kelly == pytest.approx(0.25)
+    capped = updated.with_cap(0.05)
+    assert capped.cap == pytest.approx(0.05)
+
+
 def test_portfolio_manager_correlation_and_simulation() -> None:
     manager = PortfolioManager(
         bankroll=100.0,
@@ -190,6 +200,45 @@ def test_portfolio_manager_correlation_and_simulation() -> None:
     assert summary["trials"] == pytest.approx(3.0)
     assert summary["worst_terminal"] <= summary["mean_terminal"]
     assert summary["p95_drawdown"] >= summary["p05_drawdown"]
+
+
+def test_portfolio_manager_setters_update_limits() -> None:
+    manager = PortfolioManager(bankroll=100.0, max_risk_per_bet=0.1, max_event_exposure=0.2)
+    manager.set_fractional_kelly(0.3)
+    assert manager.fractional_kelly == pytest.approx(0.3)
+    manager.set_correlation_limit("same_game", 0.4)
+    assert manager.correlation_limits["same_game"] == pytest.approx(0.4)
+    manager.set_correlation_limit("same_game", None)
+    assert "same_game" not in manager.correlation_limits
+
+
+def test_portfolio_manager_tracks_last_simulation() -> None:
+    manager = PortfolioManager(bankroll=200.0, max_risk_per_bet=1.0, max_event_exposure=1.0)
+    opportunity = Opportunity(
+        event_id="E1",
+        sportsbook="book",
+        book_market_group="Game Lines",
+        market="moneyline",
+        scope="game",
+        entity_type="team",
+        team_or_player="NE",
+        side=None,
+        line=None,
+        american_odds=+120,
+        model_probability=0.55,
+        push_probability=0.05,
+        implied_probability=0.45,
+        expected_value=0.1,
+        kelly_fraction=0.15,
+        extra={},
+    )
+    position = PortfolioPosition(opportunity=opportunity, stake=20.0)
+    result = manager.simulate_bankroll(trials=5, seed=4, positions=[position])
+    assert manager.last_simulation is result
+    summary = manager.bankroll_summary()
+    assert summary is not None
+    assert summary["trials"] == pytest.approx(5.0)
+    assert summary == result.summary()
 
 
 def test_odds_quote_helpers_expose_conversions() -> None:

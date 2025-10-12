@@ -19,7 +19,7 @@ from ..dashboard_core import (
     build_ladder_matrix,
 )
 from ..ingestion import IngestedOdds
-from ..scrapers.base import american_to_decimal
+from ..utils import american_to_decimal
 
 
 @dataclasses.dataclass(slots=True)

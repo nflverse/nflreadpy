@@ -362,17 +362,22 @@ def _portfolio_allocation(
     if correlation:
         print("\nCorrelation exposure:")
         print(json.dumps(correlation, indent=2, default=str))
+    limits = manager.correlation_limits
+    if limits:
+        print("\nCorrelation limits:")
+        for group, fraction in sorted(limits.items()):
+            print(f"  {group}: {fraction:.2%} of bankroll")
     if simulation:
-        summary = simulation.summary()
+        metrics = manager.bankroll_summary() or simulation.summary()
         print("\nBankroll simulation summary:")
-        print(f"  Trials: {int(summary['trials'])}")
-        print(f"  Mean terminal: {summary['mean_terminal']:.2f}")
-        print(f"  Median terminal: {summary['median_terminal']:.2f}")
-        print(f"  Worst terminal: {summary['worst_terminal']:.2f}")
-        print(f"  Average drawdown: {summary['average_drawdown']:.2%}")
-        print(f"  Worst drawdown: {summary['worst_drawdown']:.2%}")
-        print(f"  5th percentile drawdown: {summary['p05_drawdown']:.2%}")
-        print(f"  95th percentile drawdown: {summary['p95_drawdown']:.2%}")
+        print(f"  Trials: {int(metrics['trials'])}")
+        print(f"  Mean terminal: {metrics['mean_terminal']:.2f}")
+        print(f"  Median terminal: {metrics['median_terminal']:.2f}")
+        print(f"  Worst terminal: {metrics['worst_terminal']:.2f}")
+        print(f"  Average drawdown: {metrics['average_drawdown']:.2%}")
+        print(f"  Worst drawdown: {metrics['worst_drawdown']:.2%}")
+        print(f"  5th percentile drawdown: {metrics['p05_drawdown']:.2%}")
+        print(f"  95th percentile drawdown: {metrics['p95_drawdown']:.2%}")
     return manager, simulation
 
 
@@ -710,7 +715,9 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
         positions=tuple(manager.positions),
         exposure_by_event=manager.exposure_report(),
         correlation_exposure=manager.correlation_report(),
+        correlation_limits=manager.correlation_limits,
         simulation=simulation,
+        bankroll_summary=manager.bankroll_summary(),
     )
     rendered = dashboard.render(latest, simulations, opportunities, risk_summary=risk_summary)
     print(rendered)

@@ -52,3 +52,32 @@ def test_ingestion_logs_and_captures_invalid_quotes(
     assert summary_logs
     assert service.metrics["persisted"] == 0
     assert service.last_validation_summary.get("invalid_odds") == 1
+
+
+def test_future_timestamp_rejected(tmp_path: Path) -> None:
+    now = dt.datetime.now(dt.timezone.utc)
+    future_quote = OddsQuote(
+        event_id="E2",
+        sportsbook="book",
+        book_market_group="Game Lines",
+        market="total",
+        scope="game",
+        entity_type="total",
+        team_or_player="Total",
+        side="over",
+        line=41.5,
+        american_odds=-110,
+        observed_at=now + dt.timedelta(hours=1),
+        extra={},
+    )
+    db_path = tmp_path / "future.sqlite3"
+    service = OddsIngestionService(
+        scrapers=[StaticScraper("future", [future_quote])],
+        storage_path=db_path,
+        stale_after=dt.timedelta(minutes=5),
+    )
+
+    results = asyncio.run(service.fetch_and_store())
+    assert results == []
+    assert service.last_validation_summary.get("future_timestamp") == 1
+    assert service.metrics["discarded"].get("future_timestamp") == 1

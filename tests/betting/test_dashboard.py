@@ -9,8 +9,8 @@ from nflreadpy.betting.dashboard import (
     DashboardSnapshot,
     RiskSummary,
     TerminalDashboardSession,
-    _build_ladder_matrix,
 )
+from nflreadpy.betting.dashboard_core import build_ladder_matrix
 from nflreadpy.betting.dashboard_tui import DashboardKeyboardController
 from nflreadpy.betting import dashboard as dashboard_module
 from nflreadpy.betting.analytics import Opportunity, PortfolioPosition
@@ -112,7 +112,7 @@ def sample_simulation() -> list[SimulationResult]:
 
 
 def test_ladder_matrix(sample_quotes: list[IngestedOdds]) -> None:
-    ladders = _build_ladder_matrix(sample_quotes)
+    ladders = build_ladder_matrix(sample_quotes)
     assert ("KC@BUF", "spread", "Buffalo Bills") in ladders
     matrix = ladders[("KC@BUF", "spread", "Buffalo Bills")]
     assert "1sthalf" in matrix

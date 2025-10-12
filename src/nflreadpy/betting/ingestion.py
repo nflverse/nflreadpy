@@ -96,7 +96,6 @@ class OddsIngestionService:
             "collected_at": None,
         }
         self._last_validation_summary: Dict[str, int] = {}
-        self._audit_logger = logging.getLogger("nflreadpy.betting.audit")
         self._future_tolerance = future_tolerance
         self._init_db()
 

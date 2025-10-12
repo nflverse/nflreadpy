@@ -55,6 +55,65 @@ def test_ingestion_logs_and_captures_invalid_quotes(
     assert service.last_validation_summary.get("invalid_odds") == 1
 
 
+def test_injected_audit_logger_receives_events(tmp_path: Path) -> None:
+    class ListHandler(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.records: list[logging.LogRecord] = []
+
+        def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - trivial
+            self.records.append(record)
+
+    now = dt.datetime.now(dt.timezone.utc)
+    quotes = [
+        OddsQuote(
+            event_id="E-custom",
+            sportsbook="book",
+            book_market_group="Game Lines",
+            market="spread",
+            scope="game",
+            entity_type="team",
+            team_or_player="NE",
+            side="fav",
+            line=-3.5,
+            american_odds=0,
+            observed_at=now,
+            extra={"market_rules": {"push_handling": "push"}},
+        )
+    ]
+    db_path = tmp_path / "custom_logger.sqlite3"
+    custom_logger = logging.getLogger("test.ingestion.custom")
+    handler = ListHandler()
+    previous_handlers = list(custom_logger.handlers)
+    previous_level = custom_logger.level
+    previous_propagate = custom_logger.propagate
+    for existing in previous_handlers:
+        custom_logger.removeHandler(existing)
+    custom_logger.addHandler(handler)
+    custom_logger.setLevel(logging.INFO)
+    custom_logger.propagate = False
+
+    service = OddsIngestionService(
+        scrapers=[StaticScraper("invalid", quotes)],
+        storage_path=db_path,
+        stale_after=dt.timedelta(minutes=5),
+        audit_logger=custom_logger,
+    )
+
+    try:
+        results = asyncio.run(service.fetch_and_store())
+    finally:
+        custom_logger.removeHandler(handler)
+        for existing in previous_handlers:
+            custom_logger.addHandler(existing)
+        custom_logger.setLevel(previous_level)
+        custom_logger.propagate = previous_propagate
+
+    assert results == []
+    assert any(record.getMessage() == "ingestion.discarded" for record in handler.records)
+    assert all(record.name == "test.ingestion.custom" for record in handler.records)
+
+
 def test_ingestion_enforces_compliance(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

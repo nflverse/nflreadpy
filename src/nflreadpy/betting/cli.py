@@ -405,11 +405,51 @@ def _print_line_movements(movements: Sequence[LineMovement]) -> None:
         )
 
 
+async def _ingest_once(
+    service: OddsIngestionService, alert_manager: AlertManager | None
+) -> Sequence[IngestedOdds]:
+    """Fetch and persist odds data, emitting health alerts when configured."""
+
+    stored = await service.fetch_and_store()
+    _maybe_alert_ingestion_health(service, alert_manager)
+    return stored
+
+
 def _maybe_alert_ingestion_health(
     service: OddsIngestionService, alert_manager: AlertManager | None
 ) -> None:
     if alert_manager:
         alert_manager.notify_ingestion_health(service.metrics)
+
+
+async def _ensure_latest(
+    service: OddsIngestionService,
+    alert_manager: AlertManager | None,
+    *,
+    refresh: bool,
+) -> Sequence[IngestedOdds]:
+    """Return the freshest stored odds, refreshing via ingestion when required."""
+
+    if refresh:
+        return await _ingest_once(service, alert_manager)
+    latest = service.load_latest()
+    if latest:
+        return latest
+    return await _ingest_once(service, alert_manager)
+
+
+async def _ensure_history(
+    service: OddsIngestionService,
+    alert_manager: AlertManager | None,
+    *,
+    limit: int,
+) -> Sequence[IngestedOdds]:
+    """Return historical odds data, triggering ingestion if none are available."""
+
+    history = service.load_history(limit=limit)
+    if history:
+        return history
+    return await _ingest_once(service, alert_manager)
 
 
 def _create_service(
@@ -567,15 +607,13 @@ async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None
     service = context.service
     alert_manager = context.alert_manager
     if args.interval <= 0:
-        stored = await service.fetch_and_store()
-        _maybe_alert_ingestion_health(service, alert_manager)
+        stored = await _ingest_once(service, alert_manager)
         print(f"Ingested {len(stored)} quotes into {args.storage}")
         return
 
     async with Scheduler() as scheduler:
         async def _collect() -> None:
-            await service.fetch_and_store()
-            _maybe_alert_ingestion_health(service, alert_manager)
+            await _ingest_once(service, alert_manager)
 
         scheduler.add_job(
             _collect,
@@ -598,14 +636,7 @@ async def _cmd_ingest(context: CommandContext, args: argparse.Namespace) -> None
 async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
-    if args.refresh:
-        ingested = await service.fetch_and_store()
-        _maybe_alert_ingestion_health(service, alert_manager)
-    else:
-        ingested = service.load_latest()
-        if not ingested:
-            ingested = await service.fetch_and_store()
-            _maybe_alert_ingestion_health(service, alert_manager)
+    ingested = await _ensure_latest(service, alert_manager, refresh=args.refresh)
     quotes = _quotes_from_ingested(ingested)
     simulations = _run_simulations(quotes, args.iterations)
     correlation_limits = _parse_correlation_limits(args.correlation_limit)
@@ -643,10 +674,11 @@ async def _cmd_simulate(context: CommandContext, args: argparse.Namespace) -> No
 async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
-    history = service.load_history(limit=args.history_limit)
-    if not history:
-        history = await service.fetch_and_store()
-        _maybe_alert_ingestion_health(service, alert_manager)
+    history = await _ensure_history(
+        service,
+        alert_manager,
+        limit=args.history_limit,
+    )
     quotes = _quotes_from_ingested(history)
     simulations = _run_simulations(quotes, args.iterations)
     opportunities = _detect_opportunities(
@@ -675,14 +707,7 @@ async def _cmd_scan(context: CommandContext, args: argparse.Namespace) -> None:
 async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
-    if args.refresh:
-        latest = await service.fetch_and_store()
-        _maybe_alert_ingestion_health(service, alert_manager)
-    else:
-        latest = service.load_latest()
-        if not latest:
-            latest = await service.fetch_and_store()
-            _maybe_alert_ingestion_health(service, alert_manager)
+    latest = await _ensure_latest(service, alert_manager, refresh=args.refresh)
     quotes = _quotes_from_ingested(latest)
     simulations = _run_simulations(quotes, args.iterations)
     correlation_limits = _parse_correlation_limits(args.correlation_limit)
@@ -726,8 +751,10 @@ async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> No
     alert_manager = context.alert_manager
     history = service.load_history(limit=args.limit)
     if not history:
-        print("No historical odds available for backtesting.")
-        return
+        history = await _ensure_history(service, alert_manager, limit=args.limit)
+        if not history:
+            print("No historical odds available for backtesting.")
+            return
     grouped: Dict[str, List[IngestedOdds]] = defaultdict(list)
     for row in history:
         grouped[row.observed_at.isoformat()].append(row)

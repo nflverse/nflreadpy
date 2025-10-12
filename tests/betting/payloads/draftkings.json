@@ -1,0 +1,75 @@
+{
+  "events": [
+    {
+      "id": "2024-NE-NYJ",
+      "lastUpdate": "2024-09-01T12:05:00+00:00",
+      "markets": [
+        {
+          "id": "dk-ml-2024-NE-NYJ",
+          "group": "Game Lines",
+          "marketType": "moneyline",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "dk-ml-ne",
+              "name": "NE Patriots",
+              "odds": "-125"
+            },
+            {
+              "id": "dk-ml-nyj",
+              "name": "NY Jets",
+              "odds": "+122"
+            }
+          ]
+        },
+        {
+          "id": "dk-spread-2024-NE-NYJ",
+          "group": "Game Lines",
+          "marketType": "spread",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "dk-spread-ne",
+              "name": "NE Patriots",
+              "odds": "-112",
+              "points": "-3.0",
+              "side": "fav"
+            },
+            {
+              "id": "dk-spread-nyj",
+              "name": "NY Jets",
+              "odds": "-108",
+              "points": "+3.0",
+              "side": "dog"
+            }
+          ]
+        },
+        {
+          "id": "dk-player-2024-NE-NYJ",
+          "group": "Player Props",
+          "key": "receiving_yards",
+          "scope": "game",
+          "entityType": "player",
+          "outcomes": [
+            {
+              "id": "dk-garrett-wilson-over",
+              "name": "Garrett Wilson",
+              "odds": "+118",
+              "line": "68.5",
+              "side": "over"
+            },
+            {
+              "id": "dk-garrett-wilson-under",
+              "name": "Garrett Wilson",
+              "odds": "-140",
+              "line": "68.5",
+              "side": "under"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "events": [
+    {
+      "eventId": "2024-NE-NYJ",
+      "lastUpdated": "2024-09-01T12:00:00+00:00",
+      "markets": [
+        {
+          "id": "fd-ml-2024-NE-NYJ",
+          "group": "Game Lines",
+          "key": "moneyline",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "fd-ml-ne",
+              "label": "New England Patriots",
+              "price": "-130",
+              "participants": ["New England Patriots", "New York Jets"]
+            },
+            {
+              "id": "fd-ml-nyj",
+              "label": "New York Jets",
+              "price": "+120",
+              "participants": ["New England Patriots", "New York Jets"]
+            }
+          ]
+        },
+        {
+          "id": "fd-spread-2024-NE-NYJ",
+          "group": "Game Lines",
+          "key": "spread",
+          "scope": "game",
+          "entityType": "team",
+          "outcomes": [
+            {
+              "id": "fd-spread-ne",
+              "label": "New England Patriots",
+              "price": "-110",
+              "line": "-3.5",
+              "side": "fav"
+            },
+            {
+              "id": "fd-spread-nyj",
+              "label": "New York Jets",
+              "price": "-110",
+              "line": "+3.5",
+              "side": "dog"
+            }
+          ]
+        },
+        {
+          "id": "fd-total-2024-NE-NYJ",
+          "group": "Game Lines",
+          "key": "total",
+          "scope": "game",
+          "entityType": "total",
+          "outcomes": [
+            {
+              "id": "fd-total-over",
+              "label": "Over",
+              "price": "-108",
+              "line": "41.5",
+              "side": "over"
+            },
+            {
+              "id": "fd-total-under",
+              "label": "Under",
+              "price": "-112",
+              "line": "41.5",
+              "side": "under"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

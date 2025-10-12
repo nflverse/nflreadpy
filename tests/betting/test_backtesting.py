@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from nflreadpy.betting.backtesting import (
+    BacktestArtifacts,
     BacktestMetrics,
     SportsbookRules,
     closing_line_table,
@@ -14,6 +15,7 @@ from nflreadpy.betting.backtesting import (
     export_reliability_diagram,
     get_sportsbook_rules,
     load_historical_snapshots,
+    persist_backtest_reports,
     reliability_table,
     run_backtest,
     settlements_to_frame,
@@ -158,6 +160,33 @@ def test_push_rules_respected_for_testbook(snapshots: pl.DataFrame) -> None:
     assert push.outcome == "push"
     assert math.isclose(push.actual_outcome, 0.5)
     assert math.isclose(push.pnl, 0.0)
+
+
+def test_persist_backtest_reports_writes_expected_artifacts(
+    tmp_path: Path, snapshots: pl.DataFrame
+) -> None:
+    metrics = run_backtest(snapshots)
+    artefacts = persist_backtest_reports(
+        metrics,
+        tmp_path,
+        bins=5,
+        reliability_filename="calibration.csv",
+        closing_line_filename="closing_efficiency.csv",
+    )
+    assert isinstance(artefacts, BacktestArtifacts)
+    assert artefacts.reliability_path.name == "calibration.csv"
+    assert artefacts.closing_line_path.name == "closing_efficiency.csv"
+    assert artefacts.reliability_path.exists()
+    assert artefacts.closing_line_path.exists()
+
+    reliability = pl.read_csv(artefacts.reliability_path)
+    closing = pl.read_csv(artefacts.closing_line_path)
+
+    expected_reliability = reliability_table(metrics.settlements, bins=5)
+    expected_closing = closing_line_table(metrics.settlements)
+
+    assert reliability.frame_equal(expected_reliability)
+    assert closing.frame_equal(expected_closing)
 
 
 def test_custom_rules_override_default_behaviour(snapshots: pl.DataFrame) -> None:

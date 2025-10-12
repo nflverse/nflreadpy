@@ -46,7 +46,7 @@ _EXPORTS = {
 __all__ = sorted(_EXPORTS)
 
 
-def __getattr__(name: str):  # pragma: no cover - thin lazy importer
+def __getattr__(name: str) -> object:  # pragma: no cover - thin lazy importer
     from importlib import import_module
 
     target_module = _EXPORTS.get(name)

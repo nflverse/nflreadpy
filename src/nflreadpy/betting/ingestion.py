@@ -76,6 +76,7 @@ class OddsIngestionService:
             "per_scraper": {},
         }
         self._last_validation_summary: Dict[str, int] = {}
+        self._audit_logger = logging.getLogger("nflreadpy.betting.audit")
         self._init_db()
 
     @property

@@ -69,6 +69,19 @@ class DashboardSearchState:
         return bool(needle and needle in haystack)
 
 
+@dataclasses.dataclass(slots=True)
+class RiskSummary:
+    """Aggregate bankroll and exposure metrics for the risk panel."""
+
+    bankroll: float
+    opportunity_fraction: float
+    portfolio_fraction: float
+    positions: Sequence[PortfolioPosition] = dataclasses.field(default_factory=tuple)
+    exposure_by_event: Mapping[Tuple[str, str], float] = dataclasses.field(default_factory=dict)
+    correlation_exposure: Mapping[str, float] = dataclasses.field(default_factory=dict)
+    simulation: BankrollSimulationResult | None = None
+
+
 @dataclasses.dataclass(slots=True, frozen=True)
 class DashboardFilters:
     """Collection of filters applied to dashboard data."""
@@ -183,6 +196,7 @@ class DashboardContext:
     simulations: Sequence[SimulationResult]
     opportunities: Sequence[Opportunity]
     search_results: dict[str, Sequence[object]]
+    risk_summary: RiskSummary | None = None
 
 
 class Dashboard:
@@ -293,6 +307,7 @@ class Dashboard:
             simulations=filtered_sims,
             opportunities=filtered_opps,
             search_results=search_hits,
+            risk_summary=risk_summary,
         )
 
         sections = ["\n".join(header)]

@@ -17,6 +17,49 @@ try:  # Optional scientific backends
 except Exception:  # pragma: no cover - numpy is optional
     _np = None
 
+try:  # pragma: no cover - numba accelerates vectorised loops when available
+    import numba as _numba  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    _numba = None
+
+
+if _numba is not None and _np is not None:  # pragma: no cover - compiled at runtime
+
+    @_numba.njit(cache=True)
+    def _numba_factorial(n: int) -> float:
+        result = 1.0
+        for value in range(2, n + 1):
+            result *= value
+        return result
+
+    @_numba.njit(cache=True)
+    def _numba_bivariate_poisson_kernel(
+        lam1: float, lam2: float, lam3: float, max_home: int, max_away: int
+    ):
+        grid = _np.zeros((max_home + 1, max_away + 1), dtype=_np.float64)
+        base = math.exp(-(lam1 + lam2 + lam3))
+        for h in range(max_home + 1):
+            for a in range(max_away + 1):
+                total = 0.0
+                limit = min(h, a)
+                for k in range(limit + 1):
+                    total += (
+                        base
+                        * (lam1 ** (h - k))
+                        / _numba_factorial(h - k)
+                        * (lam2 ** (a - k))
+                        / _numba_factorial(a - k)
+                        * (lam3**k)
+                        / _numba_factorial(k)
+                    )
+                grid[h, a] = total
+        return grid
+
+else:  # pragma: no cover - fallback when numba unavailable
+
+    _numba_bivariate_poisson_kernel = None  # type: ignore[assignment]
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +91,53 @@ class HistoricalGameRecord:
     home_defense_rating: float
     away_offense_rating: float
     away_defense_rating: float
+
+
+def build_historical_records(
+    history: Iterable[HistoricalGameRecord | Mapping[str, object]]
+) -> List[HistoricalGameRecord]:
+    """Normalise iterable data into :class:`HistoricalGameRecord` instances.
+
+    The calibrator accepts flexible history inputs sourced from Polars/Pandas
+    frames or dictionaries.  This helper keeps the constructor ergonomic while
+    ensuring downstream code works with a consistent type.
+    """
+
+    records: List[HistoricalGameRecord] = []
+    for row in history:
+        if isinstance(row, HistoricalGameRecord):
+            records.append(row)
+            continue
+        if not isinstance(row, Mapping):
+            values = {
+                "home_team": getattr(row, "home_team"),
+                "away_team": getattr(row, "away_team"),
+                "home_points": getattr(row, "home_points"),
+                "away_points": getattr(row, "away_points"),
+                "home_pace": getattr(row, "home_pace", 60.0),
+                "away_pace": getattr(row, "away_pace", 60.0),
+                "home_offense_rating": getattr(row, "home_offense_rating", 0.0),
+                "home_defense_rating": getattr(row, "home_defense_rating", 0.0),
+                "away_offense_rating": getattr(row, "away_offense_rating", 0.0),
+                "away_defense_rating": getattr(row, "away_defense_rating", 0.0),
+            }
+        else:
+            values = row
+        records.append(
+            HistoricalGameRecord(
+                home_team=str(values["home_team"]),
+                away_team=str(values["away_team"]),
+                home_points=int(values["home_points"]),
+                away_points=int(values["away_points"]),
+                home_pace=float(values.get("home_pace", 60.0)),
+                away_pace=float(values.get("away_pace", 60.0)),
+                home_offense_rating=float(values.get("home_offense_rating", 0.0)),
+                home_defense_rating=float(values.get("home_defense_rating", 0.0)),
+                away_offense_rating=float(values.get("away_offense_rating", 0.0)),
+                away_defense_rating=float(values.get("away_defense_rating", 0.0)),
+            )
+        )
+    return records
 
 
 @dataclasses.dataclass(slots=True)
@@ -534,21 +624,40 @@ class BivariatePoissonEngine:
         self,
         ratings: Mapping[str, TeamRating],
         config: GameSimulationConfig | None = None,
-        historical_games: Sequence[HistoricalGameRecord] | None = None,
+        historical_games: Sequence[HistoricalGameRecord | Mapping[str, object]] | None = None,
         backend: str = "auto",
     ) -> None:
         self.ratings = dict(ratings)
         self.config = config or GameSimulationConfig()
-        self.backend = backend
         self._rng = random.Random(self.config.seed)
-        if historical_games is None:
-            historical_games = self._synthetic_history()
-        self.calibrator = BivariatePoissonCalibrator(historical_games)
-        self._numpy = _np if backend in {"auto", "numpy"} else None
-        if backend == "numpy" and self._numpy is None:
-            logger.warning("Requested numpy backend but numpy is unavailable; falling back to python")
-        if backend == "auto" and self._numpy is None:
-            logger.debug("NumPy backend not available; using python loops")
+        history = (
+            self._synthetic_history()
+            if historical_games is None
+            else build_historical_records(historical_games)
+        )
+        self.calibrator = BivariatePoissonCalibrator(history)
+        self._numpy = _np if _np is not None else None
+        self._numba_kernel = _numba_bivariate_poisson_kernel if _numba_bivariate_poisson_kernel is not None else None
+        requested = backend.lower()
+        self._backend = "python"
+        if requested not in {"auto", "python", "numpy", "numba"}:
+            raise ValueError(f"Unsupported backend {backend!r}")
+        if requested in {"auto", "numba"} and self._numba_kernel is not None:
+            self._backend = "numba"
+        elif requested in {"auto", "numpy"} and self._numpy is not None:
+            self._backend = "numpy"
+        else:
+            self._backend = "python"
+            if requested == "numba":
+                logger.warning(
+                    "Numba backend requested but unavailable; falling back to python"
+                )
+            if requested == "numpy" and self._numpy is None:
+                logger.warning(
+                    "Requested numpy backend but numpy is unavailable; falling back to python"
+                )
+            if requested == "auto" and self._numpy is None:
+                logger.debug("NumPy backend not available; using python loops")
 
     # -- calibration helpers -------------------------------------------------
 
@@ -706,12 +815,14 @@ class BivariatePoissonEngine:
                 self.simulate_game(event_id, home, away)
                 simulations += 1
         elapsed = time.perf_counter() - start
-        backend = "numpy" if self._numpy is not None else "python"
+        backend = self._backend if self._backend in {"numpy", "numba"} else "python"
         benchmark = SimulationBenchmark(backend=backend, simulations_run=simulations, elapsed_seconds=elapsed)
         if benchmark.per_minute < 1_000_000:
+            suggestion = "numpy" if self._backend == "python" and self._numpy is not None else "numba"
             logger.debug(
-                "Benchmark throughput %.0f sims/minute below target; consider enabling numpy backend",
+                "Benchmark throughput %.0f sims/minute below target; consider enabling %s backend",
                 benchmark.per_minute,
+                suggestion,
             )
         return benchmark
 
@@ -724,7 +835,9 @@ class BivariatePoissonEngine:
         max_away = int(math.ceil(params.lambda_away + params.lambda_shared + 6 * math.sqrt(params.lambda_away + params.lambda_shared)))
         max_home = max(max_home, 20)
         max_away = max(max_away, 20)
-        if self._numpy is not None:
+        if self._backend == "numba" and self._numba_kernel is not None:
+            return self._joint_distribution_numba(params, max_home, max_away)
+        if self._backend == "numpy" and self._numpy is not None:
             return self._joint_distribution_numpy(params, max_home, max_away)
         return self._joint_distribution_python(params, max_home, max_away)
 
@@ -760,6 +873,37 @@ class BivariatePoissonEngine:
                     )
                     total += term
                 distribution[(home, away)] = total
+        return distribution
+
+    def _joint_distribution_numba(
+        self,
+        params: BivariatePoissonParameters,
+        max_home: int,
+        max_away: int,
+    ) -> Dict[tuple[int, int], float]:
+        kernel = self._numba_kernel
+        if kernel is None:
+            return self._joint_distribution_python(params, max_home, max_away)
+        grid = kernel(
+            float(params.lambda_home),
+            float(params.lambda_away),
+            float(params.lambda_shared),
+            int(max_home),
+            int(max_away),
+        )
+        distribution: Dict[tuple[int, int], float] = {}
+        total = 0.0
+        for home in range(grid.shape[0]):
+            for away in range(grid.shape[1]):
+                probability = float(grid[home, away])
+                if probability <= 0.0:
+                    continue
+                distribution[(int(home), int(away))] = probability
+                total += probability
+        if total > 0.0:
+            scale = 1.0 / total
+            for key in list(distribution.keys()):
+                distribution[key] *= scale
         return distribution
 
     def _joint_distribution_numpy(
@@ -820,6 +964,7 @@ class PlayerFeatureRow:
     weather: float = 0.0
     pace: float = 0.0
     weight: float = 1.0
+    game_id: str | None = None
 
 
 class PlayerOutcomeModel:
@@ -1128,6 +1273,30 @@ class PlayerPropForecaster:
             key = market if market != "*" else "*"
             self._models[key].append(model)
 
+    def fit_pipelines(
+        self,
+        rows: Sequence[PlayerFeatureRow],
+        markets: Sequence[str] | None = None,
+        distribution: str = "normal",
+    ) -> None:
+        if not rows:
+            raise ValueError("Player pipelines require non-empty training data")
+        markets_set = set(markets or {row.market for row in rows})
+        for market in markets_set:
+            market_rows = [row for row in rows if row.market == market]
+            if not market_rows:
+                continue
+            glm = GLMPlayerModel([market], distribution=distribution)
+            glm.fit(market_rows)
+            self.register_model(glm)
+            boosted = XGBoostPlayerModel([market], distribution=distribution)
+            boosted.fit(market_rows)
+            self.register_model(boosted)
+            ngboost = NGBoostPlayerModel([market])
+            ngboost.fit(market_rows)
+            self.register_model(ngboost)
+        self._learn_covariances(rows)
+
     def register_covariance(
         self,
         player_a: str,
@@ -1142,6 +1311,49 @@ class PlayerPropForecaster:
         key_b = (player_b, market_b, scope_b)
         self._covariances[key_a][key_b] = value
         self._covariances[key_b][key_a] = value
+
+    def _learn_covariances(self, rows: Sequence[PlayerFeatureRow]) -> None:
+        games: Dict[tuple[str, str, str], Dict[str, Tuple[float, float]]] = collections.defaultdict(dict)
+        for row in rows:
+            if not row.game_id:
+                continue
+            key = (row.market, row.scope, row.game_id)
+            games[key][row.player] = (row.target, row.weight)
+        aggregate: Dict[tuple[str, str, str, str], List[Tuple[float, float, float]]] = collections.defaultdict(list)
+        for (market, scope, _game_id), participants in games.items():
+            if len(participants) < 2:
+                continue
+            for (player_a, (value_a, weight_a)), (player_b, (value_b, weight_b)) in itertools.combinations(participants.items(), 2):
+                weight = max(1e-6, (weight_a + weight_b) / 2.0)
+                aggregate[(market, scope, player_a, player_b)].append((value_a, value_b, weight))
+        for (market, scope, player_a, player_b), samples in aggregate.items():
+            if len(samples) < 2:
+                continue
+            cov = self._weighted_covariance(samples)
+            if cov == 0.0:
+                continue
+            self.register_covariance(
+                player_a,
+                market,
+                scope,
+                player_b,
+                market,
+                scope,
+                cov,
+            )
+
+    @staticmethod
+    def _weighted_covariance(samples: Sequence[Tuple[float, float, float]]) -> float:
+        total_weight = sum(weight for _, _, weight in samples)
+        if total_weight <= 0.0:
+            return 0.0
+        mean_a = sum(value_a * weight for value_a, _, weight in samples) / total_weight
+        mean_b = sum(value_b * weight for _, value_b, weight in samples) / total_weight
+        covariance = sum(
+            (value_a - mean_a) * (value_b - mean_b) * weight
+            for value_a, value_b, weight in samples
+        ) / total_weight
+        return covariance
 
     def probability(
         self,
@@ -1228,10 +1440,22 @@ class PlayerPropForecaster:
         component_features = extra.get("component_features", {})
         for participant in components:
             participant_extra = component_features.get(participant, extra)
+            projection = self._resolve_projection(participant, market, scope, participant_extra)
             mean, stdev = self.projection_stats(participant, market, scope, participant_extra)
             stats[participant] = (mean, stdev)
             total_mean += mean
             total_variance += stdev**2
+        composite_mode = str(extra.get("composite_mode", "sum")).lower()
+        if composite_mode == "either":
+            return self._composite_probability_either(
+                components,
+                market,
+                side,
+                line,
+                scope,
+                extra,
+                stats,
+            )
         for a, b in itertools.combinations(components, 2):
             cov = self._component_covariance(
                 a,
@@ -1249,6 +1473,70 @@ class PlayerPropForecaster:
             win = _normal_cdf(line, total_mean, stdev)
         return ProbabilityTriple(max(0.0, min(1.0, win)))
 
+    def _composite_probability_either(
+        self,
+        components: Sequence[str],
+        market: str,
+        side: str,
+        line: float | None,
+        scope: str,
+        extra: Mapping[str, object],
+        stats: Mapping[str, Tuple[float, float]],
+    ) -> ProbabilityTriple:
+        if line is None:
+            return ProbabilityTriple(0.5)
+        component_features = extra.get("component_features", {})
+        singles: Dict[str, ProbabilityTriple] = {}
+        for participant in components:
+            participant_features = dict(component_features.get(participant, extra))
+            participant_features.pop("components", None)
+            participant_features.pop("composite_mode", None)
+            participant_features.pop("participants", None)
+            singles[participant] = self.probability(
+                participant,
+                market,
+                "over" if side in {"over", "under"} else side,
+                line,
+                scope,
+                participant_features,
+            )
+        if _np is None or len(components) == 1:
+            base = 1.0
+            for participant in components:
+                base *= 1.0 - singles[participant].win
+            success_probability = 1.0 - base
+        else:
+            np = _np  # type: ignore[assignment]
+            means = np.array([stats[name][0] for name in components], dtype=float)
+            stdevs = np.array([stats[name][1] for name in components], dtype=float)
+            covariance = np.eye(len(components), dtype=float)
+            for idx, name in enumerate(components):
+                covariance[idx, idx] = max(1e-6, stdevs[idx] ** 2)
+            for i, name_a in enumerate(components):
+                for j, name_b in enumerate(components):
+                    if j <= i:
+                        continue
+                    cov = self._component_covariance(
+                        name_a,
+                        name_b,
+                        market,
+                        scope,
+                        component_features.get(name_a, extra),
+                        component_features.get(name_b, extra),
+                    )
+                    covariance[i, j] = covariance[j, i] = cov
+            jitter = np.eye(len(components), dtype=float) * 1e-6
+            covariance = covariance + jitter
+            seed = abs(hash((tuple(components), market, scope))) % (2**32)
+            rng = np.random.default_rng(seed)
+            samples = int(extra.get("simulation_samples", 4096))
+            draws = rng.multivariate_normal(means, covariance, size=max(1, samples))
+            successes = (draws >= line).any(axis=1)
+            success_probability = float(np.mean(successes))
+        win = success_probability if side not in {"under", "no"} else 1.0 - success_probability
+        win = max(0.0, min(1.0, win))
+        return ProbabilityTriple(win)
+
     def _component_covariance(
         self,
         player_a: str,
@@ -1264,10 +1552,13 @@ class PlayerPropForecaster:
         if direct is not None:
             return direct
         models = self._models.get(market, []) + self._models.get("*", [])
-        for model in models:
-            covariance = model.covariance(player_a, player_b, market, scope, extra_a, extra_b)
-            if covariance:
-                return covariance
+        covariances = [
+            model.covariance(player_a, player_b, market, scope, extra_a, extra_b)
+            for model in models
+        ]
+        covariances = [cov for cov in covariances if cov]
+        if covariances:
+            return statistics.fmean(covariances)
         return 0.0
 
     def _resolve_projection(

@@ -16,6 +16,7 @@ from nflreadpy.betting.ingestion import IngestedOdds, OddsIngestionService
 from nflreadpy.betting.models import (
     GameSimulationConfig,
     MonteCarloEngine,
+    PlayerFeatureRow,
     PlayerProjection,
     PlayerPropForecaster,
     SimulationResult,
@@ -321,6 +322,157 @@ def player_model() -> PlayerPropForecaster:
     )
     return model
 
+
+def test_bivariate_engine_uses_historical_records() -> None:
+    ratings = {
+        "NE": TeamRating(team="NE", offensive_rating=1.2, defensive_rating=0.4),
+        "NYJ": TeamRating(team="NYJ", offensive_rating=-0.3, defensive_rating=0.7),
+    }
+    history = [
+        {
+            "home_team": "NE",
+            "away_team": "NYJ",
+            "home_points": 27,
+            "away_points": 17,
+            "home_pace": 65.0,
+            "away_pace": 63.0,
+            "home_offense_rating": 1.1,
+            "home_defense_rating": 0.5,
+            "away_offense_rating": -0.4,
+            "away_defense_rating": 0.8,
+        },
+        {
+            "home_team": "NYJ",
+            "away_team": "NE",
+            "home_points": 20,
+            "away_points": 24,
+            "home_pace": 60.0,
+            "away_pace": 62.0,
+            "home_offense_rating": -0.2,
+            "home_defense_rating": 0.9,
+            "away_offense_rating": 1.0,
+            "away_defense_rating": 0.4,
+        },
+    ]
+    engine = MonteCarloEngine(ratings, GameSimulationConfig(seed=101), historical_games=history)
+    params = engine.calibrator.estimate_parameters(ratings["NE"], ratings["NYJ"])
+    assert params.lambda_home > 20.0
+    assert params.lambda_away > 15.0
+    result = engine.simulate_game("historical", "NE", "NYJ")
+    assert result.expected_total == pytest.approx(params.lambda_home + params.lambda_away, rel=0.05)
+
+
+def test_player_pipelines_fit_and_covariance() -> None:
+    rows = [
+        PlayerFeatureRow(
+            player="Courtland Sutton",
+            opponent="NYJ",
+            market="receiving_yards",
+            scope="game",
+            target=84.0,
+            injury_status=0.1,
+            weather=0.0,
+            pace=65.0,
+            weight=1.0,
+            game_id="2023-NE-NYJ",
+        ),
+        PlayerFeatureRow(
+            player="J.K. Dobbins",
+            opponent="NYJ",
+            market="receiving_yards",
+            scope="game",
+            target=28.0,
+            injury_status=0.0,
+            weather=0.0,
+            pace=65.0,
+            weight=1.0,
+            game_id="2023-NE-NYJ",
+        ),
+        PlayerFeatureRow(
+            player="Courtland Sutton",
+            opponent="BUF",
+            market="receiving_yards",
+            scope="game",
+            target=92.0,
+            injury_status=0.2,
+            weather=-5.0,
+            pace=61.0,
+            weight=0.9,
+            game_id="2023-DEN-BUF",
+        ),
+        PlayerFeatureRow(
+            player="J.K. Dobbins",
+            opponent="BUF",
+            market="receiving_yards",
+            scope="game",
+            target=34.0,
+            injury_status=0.1,
+            weather=-5.0,
+            pace=61.0,
+            weight=0.9,
+            game_id="2023-DEN-BUF",
+        ),
+    ]
+    forecaster = PlayerPropForecaster()
+    forecaster.fit_pipelines(rows)
+    projection = forecaster.probability(
+        "Courtland Sutton",
+        "receiving_yards",
+        "over",
+        75.0,
+        "game",
+        {"opponent": "BUF", "injury_status": 0.2, "weather": -5.0, "pace": 61.0},
+    )
+    assert 0.0 <= projection.win <= 1.0
+    covariance = forecaster._component_covariance(
+        "Courtland Sutton",
+        "J.K. Dobbins",
+        "receiving_yards",
+        "game",
+        {"opponent": "BUF", "injury_status": 0.2, "weather": -5.0, "pace": 61.0},
+        {"opponent": "BUF", "injury_status": 0.1, "weather": -5.0, "pace": 61.0},
+    )
+    assert abs(covariance) > 1e-6
+
+
+def test_either_probability_uses_covariance() -> None:
+    pytest.importorskip("numpy")
+    model = PlayerPropForecaster(
+        [
+            PlayerProjection("Player A", "receiving_yards", 78.0, 12.0),
+            PlayerProjection("Player B", "receiving_yards", 68.0, 11.0),
+        ]
+    )
+    model.register_covariance(
+        "Player A",
+        "receiving_yards",
+        "game",
+        "Player B",
+        "receiving_yards",
+        "game",
+        -60.0,
+    )
+    quote = OddsQuote(
+        event_id="2024-NE-NYJ",
+        sportsbook="testbook",
+        book_market_group="Either Player",
+        market="receiving_yards",
+        scope="game",
+        entity_type="either",
+        team_or_player="Player A/Player B",
+        side="yes",
+        line=75.0,
+        american_odds=-110,
+        observed_at=dt.datetime.now(dt.timezone.utc),
+        extra={"participants": ["Player A", "Player B"]},
+    )
+    detector = EdgeDetector(value_threshold=-1.0, player_model=model)
+    probability = detector._probability_for_quote(quote, None)
+    assert probability is not None
+    single_a = model.probability("Player A", "receiving_yards", "over", 75.0, "game", {})
+    single_b = model.probability("Player B", "receiving_yards", "over", 75.0, "game", {})
+    independence = 1.0 - (1.0 - single_a.win) * (1.0 - single_b.win)
+    assert abs(probability.win - independence) > 1e-3
 
 def test_ingestion_fetch_and_store(ingestion: OddsIngestionService, static_quotes: List[OddsQuote]) -> None:
     stored = asyncio.run(ingestion.fetch_and_store())

@@ -249,22 +249,27 @@ class EdgeDetector:
             )
             if not participants or quote.line is None:
                 return None
-            probs = [
-                self.player_model.probability(
-                    participant,
-                    quote.market,
-                    quote.side or "over",
-                    quote.line,
-                    quote.scope,
-                    quote.extra or {},
-                ).win
-                for participant in participants
-            ]
-            win = 1.0
-            for prob in probs:
-                win *= 1.0 - prob
-            win = 1.0 - win
-            return ProbabilityTriple(max(0.0, min(1.0, win)))
+            composite_extra: Dict[str, object] = dict(quote.extra or {})
+            composite_extra["components"] = participants
+            composite_extra["composite_mode"] = "either"
+            base_features = composite_extra.get("component_features")
+            participant_features: Dict[str, Mapping[str, object]] = {}
+            for participant in participants:
+                features = dict(base_features.get(participant, composite_extra) if isinstance(base_features, Mapping) else composite_extra)
+                features.pop("components", None)
+                features.pop("composite_mode", None)
+                features.pop("participants", None)
+                participant_features[participant] = features
+            composite_extra["component_features"] = participant_features
+            side = quote.side or "yes"
+            return self.player_model.probability(
+                quote.team_or_player,
+                quote.market,
+                side,
+                quote.line,
+                quote.scope,
+                composite_extra,
+            )
         return None
 
     def _evaluate_probabilities(

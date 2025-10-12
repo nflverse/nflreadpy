@@ -87,3 +87,12 @@ manager = PortfolioManager(
 With this wiring, any opportunity that fails the configured policies will be
 rejected, logged, and excluded from bankroll deployment before a stake is
 calculated.
+
+## Ingestion-Time Enforcement
+
+`OddsIngestionService` can also enforce the same policies while normalising
+odds quotes.  Pass either a ready-made `ComplianceEngine` or a
+`ComplianceConfig` instance and the ingestion pipeline will discard quotes that
+violate jurisdiction rules, credential requirements, or market metadata before
+they reach persistence.  Rejections are surfaced through the audit logger and
+the `last_validation_summary` metrics block for downstream monitoring.

@@ -6,7 +6,7 @@ import dataclasses
 import json
 import logging
 import os
-from typing import Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
+from typing import Any, Iterable, Mapping, MutableMapping, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type checkers only
     from .analytics import Opportunity
@@ -204,33 +204,80 @@ class ComplianceEngine:
     def validate(self, opportunity: "Opportunity") -> bool:
         """Return ``True`` when the opportunity satisfies compliance checks."""
 
-        reasons = []
-        metadata = dict(getattr(opportunity, "extra", {}) or {})
-        market_rules_raw = metadata.get("market_rules", {})
+        metadata = {}
+        extra = getattr(opportunity, "extra", None)
+        if isinstance(extra, Mapping):
+            metadata = dict(extra)
+        compliant, _ = self.evaluate_metadata(
+            sportsbook=getattr(opportunity, "sportsbook", ""),
+            market=getattr(opportunity, "market", None),
+            event_id=getattr(opportunity, "event_id", None),
+            metadata=metadata,
+            log=True,
+        )
+        return compliant
+
+    def evaluate_metadata(
+        self,
+        *,
+        sportsbook: str,
+        metadata: Mapping[str, Any] | None = None,
+        market: str | None = None,
+        event_id: str | None = None,
+        log: bool = False,
+    ) -> tuple[bool, list[str]]:
+        """Return a compliance decision and violation reasons for metadata."""
+
+        reasons = self._collect_violations(sportsbook, metadata or {})
+        if reasons and log:
+            self._log_violation(
+                sportsbook=sportsbook,
+                market=market,
+                event_id=event_id,
+                reasons=reasons,
+            )
+        return (not reasons, reasons)
+
+    def _collect_violations(
+        self, sportsbook: str, metadata: Mapping[str, Any]
+    ) -> list[str]:
+        reasons: list[str] = []
+        sportsbook_key = str(sportsbook or "").strip().lower()
+        market_rules_raw = metadata.get("market_rules")
         if isinstance(market_rules_raw, Mapping):
-            market_rules = {str(key): value for key, value in market_rules_raw.items()}
-        else:  # pragma: no cover - defensive guard
+            market_rules = {
+                str(key): value for key, value in market_rules_raw.items()
+            }
+        else:
             market_rules = {}
 
-        push = str(market_rules.get("push_handling", "")).lower()
-        if self.config.allowed_push_handling and push:
-            if push not in {item.lower() for item in self.config.allowed_push_handling}:
-                reasons.append(f"push_handling={push}")
-        elif self.config.allowed_push_handling:
-            reasons.append("push_handling=missing")
+        push = str(market_rules.get("push_handling", "")).strip().lower()
+        if self.config.allowed_push_handling:
+            allowed_push = {
+                item.lower() for item in self.config.allowed_push_handling
+            }
+            if push:
+                if push not in allowed_push:
+                    reasons.append(f"push_handling={push}")
+            else:
+                reasons.append("push_handling=missing")
 
         includes_ot = market_rules.get("includes_overtime")
         if self.config.require_overtime_included and not bool(includes_ot):
             reasons.append("overtime_not_included")
 
-        sportsbook = getattr(opportunity, "sportsbook", "").lower()
-        if self.config.banned_sportsbooks and sportsbook in self.config.banned_sportsbooks:
-            reasons.append(f"sportsbook_banned={sportsbook}")
+        if (
+            self.config.banned_sportsbooks
+            and sportsbook_key in self.config.banned_sportsbooks
+        ):
+            reasons.append(f"sportsbook_banned={sportsbook_key}")
 
-        if self.config.credential_requirements:
-            required = self.config.credential_requirements.get(sportsbook, set())
+        if self.config.credential_requirements and sportsbook_key:
+            required = self.config.credential_requirements.get(sportsbook_key, set())
             if required:
-                provided = set(self.config.credentials_available.get(sportsbook, set()))
+                provided = set(
+                    self.config.credentials_available.get(sportsbook_key, set())
+                )
                 credentials_meta = metadata.get("credentials")
                 if isinstance(credentials_meta, Mapping):
                     provided.update(
@@ -255,7 +302,9 @@ class ComplianceEngine:
             jurisdictions_iter = jurisdictions_raw  # type: ignore[assignment]
         else:
             jurisdictions_iter = []
-        jurisdictions = list(filter(None, (str(item).strip() for item in jurisdictions_iter)))
+        jurisdictions = list(
+            filter(None, (str(item).strip() for item in jurisdictions_iter))
+        )
         if self.config.jurisdiction_allowlist is not None:
             allowed = {item.lower() for item in self.config.jurisdiction_allowlist}
             available = {item.lower() for item in jurisdictions}
@@ -266,18 +315,25 @@ class ComplianceEngine:
                     "jurisdiction_not_permitted=" + ",".join(sorted(available))
                 )
 
-        if reasons:
-            self._audit_logger.warning(
-                "compliance.violation",
-                extra={
-                    "event_id": getattr(opportunity, "event_id", None),
-                    "market": getattr(opportunity, "market", None),
-                    "sportsbook": getattr(opportunity, "sportsbook", None),
-                    "reasons": reasons,
-                },
-            )
-            return False
-        return True
+        return reasons
+
+    def _log_violation(
+        self,
+        *,
+        sportsbook: str,
+        market: str | None,
+        event_id: str | None,
+        reasons: Sequence[str],
+    ) -> None:
+        self._audit_logger.warning(
+            "compliance.violation",
+            extra={
+                "event_id": event_id,
+                "market": market,
+                "sportsbook": sportsbook,
+                "reasons": list(reasons),
+            },
+        )
 
     def filter(self, opportunities: Sequence["Opportunity"]) -> list["Opportunity"]:
         """Return only compliant opportunities."""

@@ -65,6 +65,7 @@ from .scrapers.base import (
     best_prices_by_selection,
 )
 from .scrapers.mock import MockSportsbookScraper
+from .scope_scaling import ScopeScalingModel
 from .utils import (
     american_to_decimal,
     american_to_fractional,
@@ -116,6 +117,7 @@ __all__ = [
     "QuantumPortfolioOptimizer",
     "ProbabilityTriple",
     "SMSAlertSink",
+    "ScopeScalingModel",
     "SimulationBenchmark",
     "Scheduler",
     "SimulationResult",

@@ -56,6 +56,10 @@ pbp_pandas = pbp.to_pandas()
 
 [Reference page for config options](api/configuration.md)
 
+## Betting dashboards
+
+[Terminal and web dashboards for the betting module](api/betting_dashboard.md)
+
 ## Getting help
 
 The best places to get help on this package are:

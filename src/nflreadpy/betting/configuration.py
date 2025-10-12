@@ -76,35 +76,19 @@ class IterationConfig(BaseModel):
     backtest: int = 8_000
 
 
-class OptimizerConfig(BaseModel):
-    """Configuration for portfolio optimisation heuristics."""
+class ScopeScalingConfig(BaseModel):
+    """Configuration for loading or overriding scope scaling parameters."""
 
-    solver: str = "quantum"
-    risk_aversion: float = 0.4
-    seed: int | None = None
-    shots: int = 512
-    temperature: float = 0.6
-    annealing_steps: int = 1_024
-    annealing_initial_temp: float = 1.0
-    annealing_cooling_rate: float = 0.995
-    qaoa_layers: int = 2
-    qaoa_gamma: float = 0.8
-    qaoa_beta: float = 0.45
+    parameters_path: str | None = None
+    fallback_factors: Dict[str, float] = Field(default_factory=dict)
+    overrides: Dict[str, float] = Field(default_factory=dict)
+    seasonal_overrides: Dict[int, Dict[str, float]] = Field(default_factory=dict)
 
-    def parameters(self) -> Dict[str, float | int | None]:
-        """Return optimiser parameters keyed by constructor argument."""
 
-        return {
-            "seed": self.seed,
-            "shots": self.shots,
-            "temperature": self.temperature,
-            "steps": self.annealing_steps,
-            "initial_temperature": self.annealing_initial_temp,
-            "cooling_rate": self.annealing_cooling_rate,
-            "layers": self.qaoa_layers,
-            "gamma": self.qaoa_gamma,
-            "beta": self.qaoa_beta,
-        }
+class ModelsConfig(BaseModel):
+    """Configuration namespace for statistical models."""
+
+    scope_scaling: ScopeScalingConfig = Field(default_factory=ScopeScalingConfig)
 
 
 class AnalyticsConfig(BaseModel):
@@ -125,13 +109,30 @@ class AnalyticsConfig(BaseModel):
     optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
 
 
+class FuzzyMatchingConfig(BaseModel):
+    """Feature flag and score thresholds for fuzzy identifier resolution."""
+
+    enabled: bool = False
+    score_thresholds: Dict[str, float] = Field(default_factory=dict)
+    ambiguity_margin: float = 5.0
+
+
+class NormalizationConfig(BaseModel):
+    """Controls for canonical identifier loading and fuzzy resolution."""
+
+    canonical_identifiers_path: str | None = "config/identifiers/betting_entities.json"
+    fuzzy: FuzzyMatchingConfig = Field(default_factory=FuzzyMatchingConfig)
+
+
 class BettingConfig(BaseModel):
     """Aggregate configuration for the betting stack."""
 
     environment: str = "default"
     scrapers: list[ScraperConfig] = Field(default_factory=list)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+    normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 
 
 class ConfigurationError(ValueError):
@@ -362,6 +363,26 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
         if value <= 0:
             errors.append(f"analytics.iterations.{name} must be greater than zero")
 
+    normalization = config.normalization
+    if normalization.canonical_identifiers_path is not None and not str(
+        normalization.canonical_identifiers_path
+    ).strip():
+        errors.append("normalization.canonical_identifiers_path cannot be empty")
+    fuzzy = normalization.fuzzy
+    if fuzzy.ambiguity_margin < 0:
+        errors.append("normalization.fuzzy.ambiguity_margin must be non-negative")
+    for domain, threshold in fuzzy.score_thresholds.items():
+        if threshold < 0 or threshold > 100:
+            errors.append(
+                "normalization.fuzzy.score_thresholds." +
+                f"{domain} must be between 0 and 100"
+            )
+    if fuzzy.enabled and not fuzzy.score_thresholds:
+        warnings.append(
+            "normalization.fuzzy.enabled is true but no score thresholds are defined; "
+            "default thresholds will be used"
+        )
+
     if errors:
         bullet_list = "\n".join(f"- {message}" for message in errors)
         raise ConfigurationError(f"Configuration validation failed:\n{bullet_list}")
@@ -437,48 +458,60 @@ def create_edge_detector(
     )
 
 
-def create_portfolio_optimizer(
+def load_scope_scaling_model(
     config: BettingConfig,
     *,
-    overrides: Mapping[str, Any] | None = None,
-) -> Tuple["PortfolioOptimizer", float]:
-    """Instantiate the configured portfolio optimiser and risk preference."""
+    base_path: str | os.PathLike[str] | None = None,
+) -> "ScopeScalingModel":
+    """Load the scope scaling model referenced by configuration."""
 
-    from .quantum import create_optimizer
+    from .scope_scaling import ScopeScalingModel
 
-    optimizer_cfg = config.analytics.optimizer
-    solver = optimizer_cfg.solver
-    risk_aversion: float = optimizer_cfg.risk_aversion
-    parameters: Dict[str, Any] = dict(optimizer_cfg.parameters())
+    scope_cfg = config.models.scope_scaling
+    baseline = dict(ScopeScalingModel.DEFAULT_FACTORS)
+    for key, value in scope_cfg.fallback_factors.items():
+        baseline[ScopeScalingModel.canonical_scope(key)] = float(value)
 
-    if overrides:
-        solver = str(overrides.get("solver") or solver)
-        if overrides.get("risk_aversion") is not None:
-            risk_aversion = float(overrides["risk_aversion"])
-        for key in tuple(parameters):
-            value = overrides.get(key) if key in overrides else overrides.get(key.replace("_", "-"))
-            if value is not None:
-                parameters[key] = value
-        if overrides.get("seed") is not None:
-            parameters["seed"] = overrides["seed"]
+    parameters_path = scope_cfg.parameters_path
+    resolved_path: Path | None = None
+    if parameters_path:
+        candidate = Path(parameters_path)
+        if not candidate.is_absolute() and base_path is not None:
+            base_root = Path(base_path)
+            if base_root.is_file():
+                base_root = base_root.parent
+            candidate = base_root / candidate
+        resolved_path = candidate
 
-    clean_parameters = {
-        key: value for key, value in parameters.items() if value is not None
-    }
-    optimizer = create_optimizer(solver, **clean_parameters)
-    return optimizer, float(risk_aversion)
+    model: ScopeScalingModel
+    if resolved_path and resolved_path.exists():
+        model = ScopeScalingModel.load(resolved_path, default_factors=baseline)
+    else:
+        model = ScopeScalingModel(base_factors=baseline, default_factors=baseline)
+
+    if scope_cfg.overrides:
+        model = model.with_overrides(scope_cfg.overrides)
+
+    if scope_cfg.seasonal_overrides:
+        for season, overrides in scope_cfg.seasonal_overrides.items():
+            model = model.with_overrides(overrides, season=int(season))
+
+    return model
 
 
 __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
     "ConfigurationError",
+    "FuzzyMatchingConfig",
     "IngestionConfig",
     "IterationConfig",
+    "NormalizationConfig",
     "SchedulerConfig",
+    "ScopeScalingConfig",
     "ScraperConfig",
     "ScraperRuntimeConfig",
-    "OptimizerConfig",
+    "load_scope_scaling_model",
     "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",

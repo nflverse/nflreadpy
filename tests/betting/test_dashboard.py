@@ -13,7 +13,7 @@ from nflreadpy.betting.dashboard import (
     RiskSummary,
     TerminalDashboardSession,
 )
-from nflreadpy.betting.dashboard_core import build_ladder_matrix
+from nflreadpy.betting.dashboard_core import LadderCell, build_ladder_matrix
 from nflreadpy.betting.dashboard_tui import DashboardKeyboardController
 from nflreadpy.betting.ingestion import IngestedOdds
 from nflreadpy.betting.models import SimulationResult
@@ -124,7 +124,9 @@ def test_ladder_matrix(sample_quotes: list[IngestedOdds]) -> None:
     assert ("KC@BUF", "spread", "Buffalo Bills") in ladders
     matrix = ladders[("KC@BUF", "spread", "Buffalo Bills")]
     assert "1sthalf" in matrix
-    assert matrix["1sthalf"][-2.5] == -105
+    cell = matrix["1sthalf"][-2.5]
+    assert isinstance(cell, LadderCell)
+    assert cell.american_odds == -105
 
 
 def test_dashboard_scope_presets() -> None:

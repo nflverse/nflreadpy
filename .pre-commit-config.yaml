@@ -21,3 +21,11 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: debug-statements
+
+  - repo: local
+    hooks:
+      - id: betting-changelog
+        name: Ensure betting changelog is updated
+        entry: python scripts/check_betting_changelog.py
+        language: system
+        pass_filenames: false

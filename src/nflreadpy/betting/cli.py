@@ -7,12 +7,14 @@ import asyncio
 import dataclasses
 import json
 from collections import defaultdict
+from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Callable,
     Dict,
     Iterable,
     List,
+    Literal,
     Mapping,
     Protocol,
     Sequence,
@@ -39,7 +41,7 @@ from .analytics import LineMovement
 from .dashboard import RiskSummary
 from .ingestion import IngestedOdds
 from .models import PlayerProjection, SimulationResult, TeamRating
-from .scheduler import Scheduler
+from .scheduler import BacktestOrchestrator, BacktestScheduleConfig, Scheduler
 from .scrapers.base import OddsQuote
 from .configuration import (
     BettingConfig,
@@ -53,6 +55,19 @@ from .configuration import (
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .quantum import PortfolioOptimizer
+
+
+def _stringify_keys(mapping: Mapping[object, object]) -> Dict[str, object]:
+    """Convert dictionary keys to JSON-safe string representations."""
+
+    normalised: Dict[str, object] = {}
+    for key, value in mapping.items():
+        if isinstance(key, tuple):
+            key_text = " | ".join(str(part) for part in key)
+        else:
+            key_text = str(key)
+        normalised[key_text] = value
+    return normalised
 
 
 @dataclasses.dataclass(slots=True)
@@ -422,11 +437,11 @@ def _portfolio_allocation(
             f" {opp.market} {opp.team_or_player} @ {opp.american_odds:+d}"
         )
     print("\nExposure by event:")
-    print(json.dumps(manager.exposure_report(), indent=2, default=str))
+    print(json.dumps(_stringify_keys(manager.exposure_report()), indent=2, default=str))
     correlation = manager.correlation_report()
     if correlation:
         print("\nCorrelation exposure:")
-        print(json.dumps(correlation, indent=2, default=str))
+        print(json.dumps(_stringify_keys(correlation), indent=2, default=str))
     limits = manager.correlation_limits
     if limits:
         print("\nCorrelation limits:")
@@ -597,6 +612,17 @@ def _configure_backtest_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--limit", type=int, default=500)
     parser.add_argument("--iterations", type=int)
     parser.add_argument("--value-threshold", type=float)
+    parser.add_argument("--schedule", choices=["weekly", "seasonal"])
+    parser.add_argument("--snapshots")
+    parser.add_argument("--reports-dir")
+    parser.add_argument("--start-season", type=int)
+    parser.add_argument("--end-season", type=int)
+    parser.add_argument("--start-week", type=int)
+    parser.add_argument("--end-week", type=int)
+    parser.add_argument("--interval", type=float)
+    parser.add_argument("--jitter", type=float)
+    parser.add_argument("--retries", type=int)
+    parser.add_argument("--retry-backoff", type=float)
 
 
 def _configure_validate_parser(parser: argparse.ArgumentParser) -> None:
@@ -865,6 +891,45 @@ async def _cmd_dashboard(context: CommandContext, args: argparse.Namespace) -> N
 async def _cmd_backtest(context: CommandContext, args: argparse.Namespace) -> None:
     service = context.service
     alert_manager = context.alert_manager
+    if args.schedule:
+        if not args.snapshots:
+            raise SystemExit("--snapshots must be provided when scheduling backtests")
+        cadence = cast(Literal["weekly", "seasonal"], args.schedule)
+        snapshot_root = Path(args.snapshots).expanduser()
+        reports_root = Path(args.reports_dir or "reports/backtesting").expanduser()
+        schedule_config = BacktestScheduleConfig(
+            snapshot_root=snapshot_root,
+            output_root=reports_root,
+            cadence=cadence,
+            start_season=args.start_season,
+            end_season=args.end_season,
+            start_week=args.start_week if cadence == "weekly" else None,
+            end_week=args.end_week if cadence == "weekly" else None,
+            alert_manager=alert_manager,
+        )
+        orchestrator = BacktestOrchestrator(schedule_config)
+        interval = float(args.interval or 0.0)
+        if interval <= 0.0:
+            await orchestrator.run_once()
+            return
+        jitter = float(args.jitter or 0.0)
+        retries = int(args.retries or 0)
+        retry_backoff = float(args.retry_backoff or 2.0)
+        async with Scheduler() as scheduler:
+            scheduler.add_job(
+                orchestrator.run_once,
+                interval=interval,
+                jitter=jitter,
+                retries=retries,
+                retry_backoff=retry_backoff,
+                name=f"backtest-{cadence}",
+            )
+            install_signal_handlers(scheduler.stop)
+            print(
+                f"Starting {cadence} backtest scheduler. Press Ctrl+C to stop.",
+            )
+            await scheduler.run()
+        return
     history = service.load_history(limit=args.limit)
     if not history:
         history = await _ensure_history(service, alert_manager, limit=args.limit)

@@ -6,7 +6,16 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Iterable, Mapping, MutableMapping, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    Tuple,
+)
 
 import yaml
 from pydantic import BaseModel, Field
@@ -20,6 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type checking only
     from .analytics import EdgeDetector
     from .ingestion import OddsIngestionService
     from .scrapers.base import SportsbookScraper
+    from .quantum import PortfolioOptimizer
 
 
 class ScraperRuntimeConfig(BaseModel):
@@ -66,6 +76,37 @@ class IterationConfig(BaseModel):
     backtest: int = 8_000
 
 
+class OptimizerConfig(BaseModel):
+    """Configuration for portfolio optimisation heuristics."""
+
+    solver: str = "quantum"
+    risk_aversion: float = 0.4
+    seed: int | None = None
+    shots: int = 512
+    temperature: float = 0.6
+    annealing_steps: int = 1_024
+    annealing_initial_temp: float = 1.0
+    annealing_cooling_rate: float = 0.995
+    qaoa_layers: int = 2
+    qaoa_gamma: float = 0.8
+    qaoa_beta: float = 0.45
+
+    def parameters(self) -> Dict[str, float | int | None]:
+        """Return optimiser parameters keyed by constructor argument."""
+
+        return {
+            "seed": self.seed,
+            "shots": self.shots,
+            "temperature": self.temperature,
+            "steps": self.annealing_steps,
+            "initial_temperature": self.annealing_initial_temp,
+            "cooling_rate": self.annealing_cooling_rate,
+            "layers": self.qaoa_layers,
+            "gamma": self.qaoa_gamma,
+            "beta": self.qaoa_beta,
+        }
+
+
 class AnalyticsConfig(BaseModel):
     """Controls for downstream analytics heuristics and defaults."""
 
@@ -81,6 +122,7 @@ class AnalyticsConfig(BaseModel):
     history_limit: int = 256
     movement_threshold: int = 30
     iterations: IterationConfig = Field(default_factory=IterationConfig)
+    optimizer: OptimizerConfig = Field(default_factory=OptimizerConfig)
 
 
 class BettingConfig(BaseModel):
@@ -292,6 +334,30 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
     if analytics.movement_threshold < 0:
         errors.append("analytics.movement_threshold must be non-negative")
 
+    optimizer_cfg = analytics.optimizer
+    if optimizer_cfg.risk_aversion < 0:
+        errors.append("analytics.optimizer.risk_aversion must be non-negative")
+    if optimizer_cfg.shots <= 0:
+        errors.append("analytics.optimizer.shots must be greater than zero")
+    if optimizer_cfg.temperature <= 0:
+        errors.append("analytics.optimizer.temperature must be greater than zero")
+    if optimizer_cfg.annealing_steps <= 0:
+        errors.append("analytics.optimizer.annealing_steps must be greater than zero")
+    if optimizer_cfg.annealing_initial_temp <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_initial_temp must be greater than zero"
+        )
+    if optimizer_cfg.annealing_cooling_rate <= 0:
+        errors.append(
+            "analytics.optimizer.annealing_cooling_rate must be greater than zero"
+        )
+    if optimizer_cfg.qaoa_layers <= 0:
+        errors.append("analytics.optimizer.qaoa_layers must be greater than zero")
+    if optimizer_cfg.qaoa_gamma < 0:
+        errors.append("analytics.optimizer.qaoa_gamma must be non-negative")
+    if optimizer_cfg.qaoa_beta < 0:
+        errors.append("analytics.optimizer.qaoa_beta must be non-negative")
+
     for name, value in analytics.iterations.model_dump().items():
         if value <= 0:
             errors.append(f"analytics.iterations.{name} must be greater than zero")
@@ -371,6 +437,38 @@ def create_edge_detector(
     )
 
 
+def create_portfolio_optimizer(
+    config: BettingConfig,
+    *,
+    overrides: Mapping[str, Any] | None = None,
+) -> Tuple["PortfolioOptimizer", float]:
+    """Instantiate the configured portfolio optimiser and risk preference."""
+
+    from .quantum import create_optimizer
+
+    optimizer_cfg = config.analytics.optimizer
+    solver = optimizer_cfg.solver
+    risk_aversion: float = optimizer_cfg.risk_aversion
+    parameters: Dict[str, Any] = dict(optimizer_cfg.parameters())
+
+    if overrides:
+        solver = str(overrides.get("solver") or solver)
+        if overrides.get("risk_aversion") is not None:
+            risk_aversion = float(overrides["risk_aversion"])
+        for key in tuple(parameters):
+            value = overrides.get(key) if key in overrides else overrides.get(key.replace("_", "-"))
+            if value is not None:
+                parameters[key] = value
+        if overrides.get("seed") is not None:
+            parameters["seed"] = overrides["seed"]
+
+    clean_parameters = {
+        key: value for key, value in parameters.items() if value is not None
+    }
+    optimizer = create_optimizer(solver, **clean_parameters)
+    return optimizer, float(risk_aversion)
+
+
 __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
@@ -380,9 +478,11 @@ __all__ = [
     "SchedulerConfig",
     "ScraperConfig",
     "ScraperRuntimeConfig",
+    "OptimizerConfig",
     "validate_betting_config",
     "create_edge_detector",
     "create_ingestion_service",
+    "create_portfolio_optimizer",
     "create_scrapers_from_config",
     "load_betting_config",
 ]

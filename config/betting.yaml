@@ -38,3 +38,15 @@ analytics:
     scan: 10000
     dashboard: 15000
     backtest: 8000
+  optimizer:
+    solver: quantum
+    risk_aversion: 0.4
+    seed: 13
+    shots: 512
+    temperature: 0.6
+    annealing_steps: 1024
+    annealing_initial_temp: 1.0
+    annealing_cooling_rate: 0.995
+    qaoa_layers: 2
+    qaoa_gamma: 0.8
+    qaoa_beta: 0.45

@@ -56,7 +56,14 @@ from .models import (
     XGBoostPlayerModel,
 )
 from .normalization import NameNormalizer
-from .quantum import QuantumPortfolioOptimizer
+from .quantum import (
+    QAOAHeuristicOptimizer,
+    QuantumPortfolioOptimizer,
+    SimulatedAnnealingOptimizer,
+    create_optimizer,
+    optimizer_registry,
+    register_optimizer,
+)
 from .scheduler import Scheduler
 from .scrapers.base import (
     MultiScraperCoordinator,
@@ -114,6 +121,11 @@ __all__ = [
     "PlayerPropForecaster",
     "PlayerProjection",
     "QuantumPortfolioOptimizer",
+    "SimulatedAnnealingOptimizer",
+    "QAOAHeuristicOptimizer",
+    "create_optimizer",
+    "optimizer_registry",
+    "register_optimizer",
     "ProbabilityTriple",
     "SMSAlertSink",
     "SimulationBenchmark",

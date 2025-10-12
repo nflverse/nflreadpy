@@ -1,0 +1,376 @@
+"""Historical odds backtesting utilities."""
+
+from __future__ import annotations
+
+import dataclasses
+import math
+from pathlib import Path
+from typing import Iterable, List, Mapping, Sequence
+
+import polars as pl
+
+
+@dataclasses.dataclass(slots=True)
+class Settlement:
+    """Result of settling a single historical odds snapshot."""
+
+    event_id: str
+    sportsbook: str
+    team_or_player: str
+    market: str
+    scope: str
+    side: str | None
+    line: float | None
+    american_odds: int
+    stake: float
+    model_probability: float
+    outcome: str
+    actual_outcome: float
+    pnl: float
+    brier: float
+    log_loss: float
+    crps: float
+    closing_american_odds: int | None
+    closing_line: float | None
+
+
+@dataclasses.dataclass(slots=True)
+class BacktestMetrics:
+    """Aggregated metrics computed from a sequence of settlements."""
+
+    total_pnl: float
+    average_brier: float
+    average_log_loss: float
+    average_crps: float
+    settlements: Sequence[Settlement]
+
+
+def load_historical_snapshots(path: str | Path) -> pl.DataFrame:
+    """Load historical odds snapshots stored as CSV or Parquet files.
+
+    Parameters
+    ----------
+    path:
+        Path to a single file or a directory containing snapshot files. Files
+        must be in CSV or Parquet format and share a compatible schema.
+    """
+
+    target = Path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"Snapshot path does not exist: {target}")
+
+    files: List[Path]
+    if target.is_file():
+        files = [target]
+    else:
+        files = sorted(
+            [
+                candidate
+                for candidate in target.rglob("*")
+                if candidate.suffix.lower() in {".csv", ".parquet"}
+            ]
+        )
+    if not files:
+        raise ValueError(f"No snapshot files found under {target}")
+
+    frames: List[pl.DataFrame] = []
+    for file in files:
+        if file.suffix.lower() == ".csv":
+            frames.append(pl.read_csv(file))
+        elif file.suffix.lower() == ".parquet":
+            frames.append(pl.read_parquet(file))
+        else:  # pragma: no cover - defensive branch
+            raise ValueError(f"Unsupported snapshot format: {file.suffix}")
+
+    if len(frames) == 1:
+        return frames[0]
+    return pl.concat(frames, how="vertical_relaxed")
+
+
+def run_backtest(snapshots: pl.DataFrame) -> BacktestMetrics:
+    """Simulate settlements and compute summary metrics."""
+
+    settlements = list(simulate_settlements(snapshots))
+    if not settlements:
+        raise ValueError("No settlements produced from snapshots")
+
+    total_pnl = sum(item.pnl for item in settlements)
+    average_brier = sum(item.brier for item in settlements) / len(settlements)
+    average_log_loss = sum(item.log_loss for item in settlements) / len(settlements)
+    average_crps = sum(item.crps for item in settlements) / len(settlements)
+    return BacktestMetrics(
+        total_pnl=total_pnl,
+        average_brier=average_brier,
+        average_log_loss=average_log_loss,
+        average_crps=average_crps,
+        settlements=settlements,
+    )
+
+
+def simulate_settlements(snapshots: pl.DataFrame) -> Iterable[Settlement]:
+    """Yield :class:`Settlement` objects for each odds snapshot."""
+
+    expected_columns = {
+        "event_id",
+        "sportsbook",
+        "market",
+        "scope",
+        "entity_type",
+        "team_or_player",
+        "side",
+        "line",
+        "american_odds",
+        "model_probability",
+        "home_team",
+        "away_team",
+        "home_score",
+        "away_score",
+    }
+    missing = expected_columns.difference(snapshots.columns)
+    if missing:
+        raise ValueError(f"Snapshots missing required columns: {sorted(missing)}")
+
+    for row in snapshots.iter_rows(named=True):
+        settlement = _settle_row(row)
+        yield settlement
+
+
+def export_reliability_diagram(
+    settlements: Sequence[Settlement],
+    output_path: str | Path,
+    bins: int = 10,
+) -> Path:
+    """Generate a reliability diagram table and persist it as CSV."""
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    table = _reliability_table(settlements, bins)
+    table.write_csv(output)
+    return output
+
+
+def export_closing_line_report(
+    settlements: Sequence[Settlement],
+    output_path: str | Path,
+) -> Path:
+    """Persist a closing line comparison report as CSV."""
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    table = _closing_line_table(settlements)
+    table.write_csv(output)
+    return output
+
+
+def _settle_row(row: Mapping[str, object]) -> Settlement:
+    market = str(row["market"]).lower()
+    scope = str(row["scope"])
+    side = row.get("side")
+    if side is not None:
+        side = str(side)
+
+    team_or_player = str(row["team_or_player"])
+    home_team = str(row["home_team"])
+    away_team = str(row["away_team"])
+    home_score = float(row["home_score"])
+    away_score = float(row["away_score"])
+    line = row.get("line")
+    line_value = None if line is None else float(line)
+    stake_value = float(row.get("stake", 1.0))
+    price = int(row["american_odds"])
+    closing_price = row.get("closing_american_odds")
+    closing_line = row.get("closing_line")
+    closing_price_value = None if closing_price is None else int(closing_price)
+    closing_line_value = None if closing_line is None else float(closing_line)
+    probability = float(row["model_probability"])
+
+    actual_outcome, state = _resolve_outcome(
+        market,
+        team_or_player,
+        side,
+        line_value,
+        home_team,
+        away_team,
+        home_score,
+        away_score,
+    )
+    payout = _payout(price, stake_value, state)
+    brier = (probability - actual_outcome) ** 2
+    log_loss = _log_loss(probability, actual_outcome)
+    # For binary outcomes the Continuous Ranked Probability Score equals the Brier score
+    crps = brier
+
+    return Settlement(
+        event_id=str(row["event_id"]),
+        sportsbook=str(row["sportsbook"]),
+        team_or_player=team_or_player,
+        market=market,
+        scope=scope,
+        side=side,
+        line=line_value,
+        american_odds=price,
+        stake=stake_value,
+        model_probability=probability,
+        outcome=state,
+        actual_outcome=actual_outcome,
+        pnl=payout,
+        brier=brier,
+        log_loss=log_loss,
+        crps=crps,
+        closing_american_odds=closing_price_value,
+        closing_line=closing_line_value,
+    )
+
+
+def _resolve_outcome(
+    market: str,
+    team_or_player: str,
+    side: str | None,
+    line: float | None,
+    home_team: str,
+    away_team: str,
+    home_score: float,
+    away_score: float,
+) -> tuple[float, str]:
+    market_key = market.lower()
+    if market_key in {"moneyline", "winner"}:
+        winner = home_team if home_score > away_score else away_team
+        result = 1.0 if team_or_player == winner else 0.0
+        return result, "win" if result == 1.0 else "loss"
+    if market_key.startswith("spread"):
+        if line is None:
+            raise ValueError("Spread markets require a line value")
+        margin = _team_margin(team_or_player, home_team, away_team, home_score, away_score)
+        adjusted = margin + line
+        if math.isclose(adjusted, 0.0, abs_tol=1e-9):
+            return 0.5, "push"
+        return (1.0, "win") if adjusted > 0 else (0.0, "loss")
+    if market_key in {"total", "game_total"}:
+        if line is None or side is None:
+            raise ValueError("Total markets require both line and side")
+        total_points = home_score + away_score
+        if side.lower() == "over":
+            diff = total_points - line
+        else:
+            diff = line - total_points
+        if math.isclose(diff, 0.0, abs_tol=1e-9):
+            return 0.5, "push"
+        return (1.0, "win") if diff > 0 else (0.0, "loss")
+    raise NotImplementedError(f"Unsupported market type: {market}")
+
+
+def _team_margin(
+    team_or_player: str,
+    home_team: str,
+    away_team: str,
+    home_score: float,
+    away_score: float,
+) -> float:
+    if team_or_player == home_team:
+        return home_score - away_score
+    if team_or_player == away_team:
+        return away_score - home_score
+    raise ValueError("Team did not participate in event")
+
+
+def _payout(american_odds: int, stake: float, state: str) -> float:
+    if state == "push":
+        return 0.0
+    if state not in {"win", "loss"}:
+        raise ValueError(f"Unknown settlement state: {state}")
+    if american_odds == 0:
+        raise ValueError("American odds cannot be zero")
+    if state == "loss":
+        return -stake
+    if american_odds > 0:
+        return stake * (american_odds / 100.0)
+    return stake * (100.0 / abs(american_odds))
+
+
+def _log_loss(probability: float, outcome: float) -> float:
+    clipped = min(max(probability, 1e-12), 1.0 - 1e-12)
+    return -(
+        outcome * math.log(clipped)
+        + (1.0 - outcome) * math.log(1.0 - clipped)
+    )
+
+
+def _reliability_table(settlements: Sequence[Settlement], bins: int) -> pl.DataFrame:
+    if bins <= 0:
+        raise ValueError("Number of bins must be positive")
+    edges = [i / bins for i in range(bins + 1)]
+    buckets: dict[int, list[tuple[float, float]]] = {i: [] for i in range(bins)}
+    for settlement in settlements:
+        probability = settlement.model_probability
+        outcome = settlement.actual_outcome
+        if not 0.0 <= probability <= 1.0:
+            raise ValueError("Model probabilities must be between 0 and 1")
+        index = min(bins - 1, int(probability * bins))
+        buckets[index].append((probability, outcome))
+
+    records = []
+    for index, values in buckets.items():
+        if not values:
+            continue
+        probs, outcomes = zip(*values)
+        records.append(
+            {
+                "bin_lower": edges[index],
+                "bin_upper": edges[index + 1],
+                "count": len(values),
+                "predicted_mean": sum(probs) / len(values),
+                "observed_rate": sum(outcomes) / len(values),
+            }
+        )
+    return pl.DataFrame(records)
+
+
+def _closing_line_table(settlements: Sequence[Settlement]) -> pl.DataFrame:
+    records = []
+    for settlement in settlements:
+        closing_odds = settlement.closing_american_odds
+        if closing_odds is None and settlement.closing_line is None:
+            continue
+        initial_implied = _implied_probability(settlement.american_odds)
+        closing_implied = (
+            _implied_probability(closing_odds) if closing_odds is not None else None
+        )
+        records.append(
+            {
+                "event_id": settlement.event_id,
+                "team_or_player": settlement.team_or_player,
+                "market": settlement.market,
+                "scope": settlement.scope,
+                "american_odds": settlement.american_odds,
+                "closing_american_odds": closing_odds,
+                "odds_delta": None
+                if closing_odds is None
+                else closing_odds - settlement.american_odds,
+                "implied_probability": initial_implied,
+                "closing_implied_probability": closing_implied,
+                "implied_delta": None
+                if closing_implied is None
+                else closing_implied - initial_implied,
+                "line": settlement.line,
+                "closing_line": settlement.closing_line,
+                "line_delta": None
+                if settlement.closing_line is None or settlement.line is None
+                else settlement.closing_line - settlement.line,
+            }
+        )
+    return pl.DataFrame(records)
+
+
+def _implied_probability(american_odds: int) -> float:
+    if american_odds == 0:
+        raise ValueError("American odds cannot be zero")
+    if american_odds > 0:
+        return 100.0 / (american_odds + 100.0)
+    return abs(american_odds) / (abs(american_odds) + 100.0)
+
+
+def settlements_to_frame(settlements: Sequence[Settlement]) -> pl.DataFrame:
+    """Convert a collection of settlements into a Polars DataFrame."""
+
+    return pl.DataFrame([dataclasses.asdict(item) for item in settlements])
+

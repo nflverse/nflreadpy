@@ -43,11 +43,13 @@ nav:
     - Utilities: api/utils.md
     - Betting Dashboard: api/betting_dashboard.md
   - Guides:
+    - User Guide: guides/user-guide.md
+    - Developer Guide: guides/developer-guide.md
+    - Operations Guide: guides/operations.md
     - Platform Setup: guides/setup.md
     - Configuration: guides/configuration.md
     - CLI Commands: guides/cli.md
     - Dashboards: guides/dashboards.md
-    - Operations & Runbooks: guides/operations.md
     - Extension Points: guides/extension-points.md
   - Betting:
     - Setup: betting/setup.md

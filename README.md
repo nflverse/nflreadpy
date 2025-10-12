@@ -98,11 +98,13 @@ docker run --rm \
 
 Comprehensive documentation for the betting toolkit lives on the docs site:
 
+- [User guide](docs/guides/user-guide.md)
+- [Developer guide](docs/guides/developer-guide.md)
+- [Operations guide](docs/guides/operations.md)
 - [Platform setup](https://nflreadpy.nflverse.com/guides/setup/)
 - [Configuration reference](https://nflreadpy.nflverse.com/guides/configuration/)
 - [CLI command reference](https://nflreadpy.nflverse.com/guides/cli/)
 - [Dashboard operations](https://nflreadpy.nflverse.com/guides/dashboards/)
-- [Operations & runbooks](https://nflreadpy.nflverse.com/guides/operations/)
 - [Extension points](https://nflreadpy.nflverse.com/guides/extension-points/)
 
 Quotes are normalised into the rich schema requested in ``AGENTS.md``:

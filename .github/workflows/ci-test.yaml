@@ -39,6 +39,19 @@ jobs:
       - name: Validate layered betting configuration
         run: uv run nflreadpy-betting validate-config --config config/betting.yaml
 
+      - name: Validate production layered configuration
+        run: |
+          export NFLREADPY_BETTING_ENV=production
+          export DRAFTKINGS_API_TOKEN=dummy-token
+          export PINNACLE_USERNAME=dummy-user
+          export PINNACLE_PASSWORD=dummy-pass
+          uv run nflreadpy-betting validate-config --config config/betting.yaml
+
+      - name: Exercise ingestion path with layered config
+        run: |
+          export NFLREADPY_BETTING__ingestion__storage_path="$RUNNER_TEMP/odds.sqlite3"
+          uv run nflreadpy-betting ingest --config config/betting.yaml --interval 0
+
       - name: Run tests
         run: uv run pytest tests -vv
 
@@ -64,3 +77,20 @@ jobs:
 
       - name: Build documentation
         run: uv run mkdocs build --strict
+
+  docker-build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - name: cpu
+            file: Dockerfile.cpu
+          - name: gpu
+            file: Dockerfile.gpu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.name }} image
+        run: docker build -f ${{ matrix.file }} --target runtime -t nflreadpy-betting:${{ matrix.name }} .

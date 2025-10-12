@@ -42,12 +42,14 @@ class OddsIngestionService:
         scrapers: Sequence[SportsbookScraper],
         storage_path: str | os.PathLike[str] = "betting_odds.sqlite3",
         normalizer: NameNormalizer | None = None,
+        audit_logger: logging.Logger | None = None,
     ) -> None:
         self.scrapers = list(scrapers)
         self.storage_path = Path(storage_path)
         self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._normalizer = normalizer or default_normalizer()
         self._coordinator = MultiScraperCoordinator(self.scrapers, self._normalizer)
+        self._audit_logger = audit_logger or logging.getLogger("nflreadpy.betting.audit")
         self._init_db()
 
     def _init_db(self) -> None:
@@ -194,6 +196,13 @@ class OddsIngestionService:
             conn.commit()
 
         logger.info("Stored %d odds quotes", len(payload))
+        self._audit_logger.info(
+            "ingestion.persisted",
+            extra={
+                "count": len(payload),
+                "storage_path": str(self.storage_path),
+            },
+        )
         return [
             IngestedOdds(
                 event_id=quote.event_id,

@@ -436,6 +436,12 @@ def _closing_line_table(settlements: Sequence[Settlement]) -> pl.DataFrame:
         closing_implied = (
             _implied_probability(closing_odds) if closing_odds is not None else None
         )
+        model_edge = settlement.model_probability - initial_implied
+        closing_model_edge = (
+            settlement.model_probability - closing_implied
+            if closing_implied is not None
+            else None
+        )
         records.append(
             {
                 "event_id": settlement.event_id,
@@ -452,6 +458,12 @@ def _closing_line_table(settlements: Sequence[Settlement]) -> pl.DataFrame:
                 "implied_delta": None
                 if closing_implied is None
                 else closing_implied - initial_implied,
+                "model_probability": settlement.model_probability,
+                "model_edge": model_edge,
+                "closing_model_edge": closing_model_edge,
+                "edge_delta": None
+                if closing_model_edge is None
+                else closing_model_edge - model_edge,
                 "line": settlement.line,
                 "closing_line": settlement.closing_line,
                 "line_delta": None

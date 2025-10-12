@@ -21,6 +21,11 @@ modern Python conventions.
 - Intelligent caching (memory or filesystem)
 - Progress tracking for large downloads
 
+## Documentation
+
+Browse the full documentation at [nflreadpy.nflverse.com](https://nflreadpy.nflverse.com) for API
+reference material, operational guides, and extension patterns.
+
 ## Install
 
 ```bash
@@ -82,12 +87,12 @@ provides:
 
 Comprehensive documentation for the betting toolkit lives on the docs site:
 
-- [Setup guide](https://nflreadpy.nflverse.com/betting/setup/)
-- [Configuration reference](https://nflreadpy.nflverse.com/betting/configuration/)
-- [CLI command reference](https://nflreadpy.nflverse.com/betting/cli/)
-- [Dashboard usage](https://nflreadpy.nflverse.com/betting/dashboard/)
-- [Developer extension points](https://nflreadpy.nflverse.com/betting/extensibility/)
-- [Operations runbook](https://nflreadpy.nflverse.com/betting/operations/)
+- [Platform setup](https://nflreadpy.nflverse.com/guides/setup/)
+- [Configuration reference](https://nflreadpy.nflverse.com/guides/configuration/)
+- [CLI command reference](https://nflreadpy.nflverse.com/guides/cli/)
+- [Dashboard operations](https://nflreadpy.nflverse.com/guides/dashboards/)
+- [Operations & runbooks](https://nflreadpy.nflverse.com/guides/operations/)
+- [Extension points](https://nflreadpy.nflverse.com/guides/extension-points/)
 
 Quotes are normalised into the rich schema requested in ``AGENTS.md``:
 

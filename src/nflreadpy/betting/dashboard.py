@@ -7,207 +7,36 @@ by the Streamlit web dashboard, allowing the two interfaces to stay in sync.
 
 from __future__ import annotations
 
-import dataclasses
 import datetime as dt
 import shlex
-from collections import defaultdict
-from typing import Iterable, Mapping, Sequence, Tuple
+from typing import Iterable, Sequence
 
-from .analytics import BankrollSimulationResult, Opportunity, PortfolioPosition
+from .analytics import Opportunity
+from .dashboard_core import (
+    DEFAULT_SEARCH_TARGETS,
+    DashboardContext,
+    DashboardFilters,
+    DashboardPanelState,
+    DashboardPanelView,
+    DashboardSearchState,
+    DashboardSnapshot,
+    RiskSummary,
+    build_ladder_matrix,
+    is_half_scope,
+    is_quarter_scope,
+    normalize_scope,
+    parse_filter_tokens,
+)
 from .ingestion import IngestedOdds
 from .models import SimulationResult
 
 
-DEFAULT_SEARCH_TARGETS = frozenset({"quotes", "opportunities", "simulations"})
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class DashboardPanelState:
-    """Represents whether a panel is visible to the user."""
-
-    key: str
-    title: str
-    collapsed: bool = False
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class DashboardSearchState:
-    """Metadata describing the active dashboard search query."""
-
-    query: str | None = None
-    case_sensitive: bool = False
-    targets: frozenset[str] = dataclasses.field(default_factory=lambda: DEFAULT_SEARCH_TARGETS)
-
-    def normalised_query(self) -> str | None:
-        if self.query is None:
-            return None
-        return self.query if self.case_sensitive else self.query.lower()
-
-    def update(
-        self,
-        *,
-        query: str | None | object = dataclasses.MISSING,
-        case_sensitive: bool | object = dataclasses.MISSING,
-        targets: Iterable[str] | object = dataclasses.MISSING,
-    ) -> "DashboardSearchState":
-        payload: dict[str, object] = {}
-        if query is not dataclasses.MISSING:
-            payload["query"] = query
-        if case_sensitive is not dataclasses.MISSING:
-            payload["case_sensitive"] = bool(case_sensitive)
-        if targets is not dataclasses.MISSING:
-            payload["targets"] = DEFAULT_SEARCH_TARGETS if targets is None else frozenset(targets)
-        return dataclasses.replace(self, **payload)
-
-    def match(self, text: str) -> bool:
-        """Return ``True`` when ``text`` satisfies the current query."""
-
-        if not self.query:
-            return True
-        haystack = text if self.case_sensitive else text.lower()
-        needle = self.normalised_query()
-        return bool(needle and needle in haystack)
-
-
-@dataclasses.dataclass(slots=True)
-class RiskSummary:
-    """Aggregate bankroll and exposure metrics for the risk panel."""
-
-    bankroll: float
-    opportunity_fraction: float
-    portfolio_fraction: float
-    positions: Sequence[PortfolioPosition] = dataclasses.field(default_factory=tuple)
-    exposure_by_event: Mapping[Tuple[str, str], float] = dataclasses.field(default_factory=dict)
-    correlation_exposure: Mapping[str, float] = dataclasses.field(default_factory=dict)
-    simulation: BankrollSimulationResult | None = None
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class DashboardFilters:
-    """Collection of filters applied to dashboard data."""
-
-    sportsbooks: frozenset[str] | None = None
-    market_groups: frozenset[str] | None = None
-    markets: frozenset[str] | None = None
-    scopes: frozenset[str] | None = None
-    events: frozenset[str] | None = None
-    include_quarters: bool = True
-    include_halves: bool = True
-
-    def update(
-        self,
-        *,
-        sportsbooks: Iterable[str] | None | object = dataclasses.MISSING,
-        market_groups: Iterable[str] | None | object = dataclasses.MISSING,
-        markets: Iterable[str] | None | object = dataclasses.MISSING,
-        scopes: Iterable[str] | None | object = dataclasses.MISSING,
-        events: Iterable[str] | None | object = dataclasses.MISSING,
-        include_quarters: bool | object = dataclasses.MISSING,
-        include_halves: bool | object = dataclasses.MISSING,
-    ) -> "DashboardFilters":
-        """Return a new instance with provided updates."""
-
-        payload: dict[str, object] = {}
-        if sportsbooks is not dataclasses.MISSING:
-            payload["sportsbooks"] = _freeze_optional(sportsbooks)
-        if market_groups is not dataclasses.MISSING:
-            payload["market_groups"] = _freeze_optional(market_groups)
-        if markets is not dataclasses.MISSING:
-            payload["markets"] = _freeze_optional(markets)
-        if scopes is not dataclasses.MISSING:
-            normalized = None
-            if scopes is not None:
-                normalized = frozenset(_normalize_scope(scope) for scope in scopes)
-            payload["scopes"] = normalized
-        if events is not dataclasses.MISSING:
-            payload["events"] = _freeze_optional(events)
-        if include_quarters is not dataclasses.MISSING:
-            payload["include_quarters"] = bool(include_quarters)
-        if include_halves is not dataclasses.MISSING:
-            payload["include_halves"] = bool(include_halves)
-        return dataclasses.replace(self, **payload)
-
-    def match_odds(self, quote: IngestedOdds) -> bool:
-        """Return ``True`` if the odds quote passes active filters."""
-
-        if self.sportsbooks and quote.sportsbook not in self.sportsbooks:
-            return False
-        if self.market_groups and quote.book_market_group not in self.market_groups:
-            return False
-        if self.markets and quote.market not in self.markets:
-            return False
-        scope = _normalize_scope(quote.scope)
-        if not self.include_quarters and _is_quarter_scope(scope):
-            return False
-        if not self.include_halves and _is_half_scope(scope):
-            return False
-        if self.scopes and scope not in self.scopes:
-            return False
-        if self.events and quote.event_id not in self.events:
-            return False
-        return True
-
-    def match_opportunity(self, opportunity: Opportunity) -> bool:
-        if self.sportsbooks and opportunity.sportsbook not in self.sportsbooks:
-            return False
-        if self.market_groups and opportunity.book_market_group not in self.market_groups:
-            return False
-        if self.markets and opportunity.market not in self.markets:
-            return False
-        scope = _normalize_scope(opportunity.scope)
-        if not self.include_quarters and _is_quarter_scope(scope):
-            return False
-        if not self.include_halves and _is_half_scope(scope):
-            return False
-        if self.scopes and scope not in self.scopes:
-            return False
-        if self.events and opportunity.event_id not in self.events:
-            return False
-        return True
-
-    def match_simulation(self, result: SimulationResult) -> bool:
-        if self.events and result.event_id not in self.events:
-            return False
-        return True
-
-    def description(self) -> list[str]:
-        """Return human readable summary of active filters."""
-
-        pieces: list[str] = []
-        pieces.append(_describe_dimension("Sportsbooks", self.sportsbooks))
-        pieces.append(_describe_dimension("Market groups", self.market_groups))
-        pieces.append(_describe_dimension("Markets", self.markets))
-        pieces.append(_describe_dimension("Scopes", self.scopes))
-        pieces.append(_describe_dimension("Events", self.events))
-        pieces.append(
-            f"Quarters={'on' if self.include_quarters else 'off'} | "
-            f"Halves={'on' if self.include_halves else 'off'}"
-        )
-        return pieces
-
-
-@dataclasses.dataclass(slots=True)
-class DashboardContext:
-    filters: DashboardFilters
-    search: DashboardSearchState
-    odds: Sequence[IngestedOdds]
-    simulations: Sequence[SimulationResult]
-    opportunities: Sequence[Opportunity]
-    search_results: dict[str, Sequence[object]]
-    risk_summary: RiskSummary | None = None
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class DashboardPanelView:
-    state: DashboardPanelState
-    body: tuple[str, ...]
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class DashboardSnapshot:
-    header: tuple[str, ...]
-    panels: tuple[DashboardPanelView, ...]
-    context: DashboardContext
+# Backwards compatibility aliases for historical private imports
+_build_ladder_matrix = build_ladder_matrix
+_parse_filter_tokens = parse_filter_tokens
+_normalize_scope = normalize_scope
+_is_quarter_scope = is_quarter_scope
+_is_half_scope = is_half_scope
 
 
 class Dashboard:
@@ -433,7 +262,7 @@ class Dashboard:
         if not opportunities:
             return "No actionable opportunities detected."
         lines = [
-            "Event      Market       Scope Selection            Odds   Model   Push  Implied    EV    Kelly",
+            "Event      Market       Scope Selection            US    Dec    Frac   Model   Push  Implied    EV    Kelly",
         ]
         for opp in opportunities[:20]:
             side = opp.side or "-"
@@ -441,9 +270,13 @@ class Dashboard:
             line_display = ""
             if opp.line is not None:
                 line_display = f" {opp.line:.1f}"
+            decimal = opp.decimal_odds()
+            frac_num, frac_den = opp.fractional_odds()
+            frac_display = f"{frac_num}/{frac_den}"
             lines.append(
                 f"{opp.event_id:<10}{opp.market:<12}{opp.scope:<6}{selection:<20}{opp.american_odds:>6}"
-                f"{opp.model_probability:>8.2%}{opp.push_probability:>7.2%}{opp.implied_probability:>8.2%}"
+                f"{decimal:>7.2f}{frac_display:>8}{opp.model_probability:>8.2%}"
+                f"{opp.push_probability:>7.2%}{opp.implied_probability:>8.2%}"
                 f"{opp.expected_value:>7.2%}{opp.kelly_fraction:>8.2%}{line_display}"
             )
         return "\n".join(lines)
@@ -610,85 +443,6 @@ class Dashboard:
         if "simulations" in self.search.targets:
             matches["simulations"] = [sim for sim in simulations if _match_simulation(sim)]
         return matches
-
-
-# ----------------------------------------------------------------------
-# Helper utilities
-# ----------------------------------------------------------------------
-
-def _freeze_optional(values: Iterable[str] | None) -> frozenset[str] | None:
-    if values is None:
-        return None
-    return frozenset(values)
-
-
-def _normalize_scope(scope: str) -> str:
-    return scope.strip().lower().replace(" ", "")
-
-
-def _is_quarter_scope(scope: str) -> bool:
-    normalized = scope.replace("quarter", "q")
-    return normalized in {
-        "q1",
-        "1q",
-        "firstq",
-        "q2",
-        "2q",
-        "secondq",
-        "q3",
-        "3q",
-        "thirdq",
-        "q4",
-        "4q",
-        "fourthq",
-    }
-
-
-def _is_half_scope(scope: str) -> bool:
-    normalized = scope.replace("half", "h")
-    return normalized in {
-        "h1",
-        "1h",
-        "firsth",
-        "h2",
-        "2h",
-        "secondh",
-        "fh",
-        "sh",
-    }
-
-
-def _describe_dimension(name: str, values: frozenset[str] | None) -> str:
-    if not values:
-        return f"{name}: All"
-    return f"{name}: {', '.join(sorted(values))}"
-
-
-def _build_ladder_matrix(
-    odds: Sequence[IngestedOdds],
-) -> dict[tuple[str, str, str], dict[str, dict[float, int]]]:
-    ladder: dict[tuple[str, str, str], dict[str, dict[float, int]]] = defaultdict(
-        lambda: defaultdict(dict)
-    )
-    for quote in odds:
-        if quote.line is None:
-            continue
-        key = (quote.event_id, quote.market, quote.team_or_player)
-        scope = _normalize_scope(quote.scope)
-        ladder[key][scope][round(float(quote.line), 1)] = quote.american_odds
-    return {k: dict(v) for k, v in ladder.items()}
-
-
-def _parse_filter_tokens(tokens: Sequence[str]) -> dict[str, object]:
-    updates: dict[str, object] = {}
-    for token in tokens:
-        if "=" not in token:
-            raise ValueError(f"Invalid filter token: {token}")
-        key, value = token.split("=", 1)
-        key = key.strip()
-        values = [item.strip() for item in value.split(",") if item.strip()]
-        updates[key] = None if not values else values
-    return updates
 
 
 class TerminalDashboardSession:

@@ -290,6 +290,8 @@ def test_service_metrics_and_validation(
     assert metrics["persisted"] == len(stored) == 17
     assert metrics["discarded"].get("invalid_odds") == 1
     assert metrics["discarded"].get("stale") == 2
+    assert metrics["collected_at"]
+    dt.datetime.fromisoformat(metrics["collected_at"])
     assert metrics["latency_seconds"] >= 0.0
     per_scraper = metrics["per_scraper"]
     assert set(per_scraper) == {"fanduel", "draftkings", "pinnacle"}

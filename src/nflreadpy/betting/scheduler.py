@@ -7,7 +7,7 @@ import contextlib
 import dataclasses
 import logging
 import random
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,24 @@ class Scheduler:
         self._tasks: list[asyncio.Task[Any]] = []
         self._stop_event = asyncio.Event()
 
+    async def __aenter__(self) -> "Scheduler":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        del exc_type, exc, traceback
+        await self.shutdown()
+
+    @property
+    def jobs(self) -> Sequence[ScheduledJob]:
+        """Return a snapshot of registered jobs."""
+
+        return tuple(self._jobs)
+
     def add_job(
         self,
         action: AsyncCallable,
@@ -78,18 +96,18 @@ class Scheduler:
         retries: int = 0,
         retry_backoff: float = 2.0,
         name: str | None = None,
-    ) -> None:
+    ) -> ScheduledJob:
         job_name = name or getattr(action, "__name__", "scheduled-job")
-        self._jobs.append(
-            ScheduledJob(
-                name=job_name,
-                action=action,
-                interval=interval,
-                jitter=jitter,
-                retries=retries,
-                retry_backoff=retry_backoff,
-            )
+        job = ScheduledJob(
+            name=job_name,
+            action=action,
+            interval=interval,
+            jitter=jitter,
+            retries=retries,
+            retry_backoff=retry_backoff,
         )
+        self._jobs.append(job)
+        return job
 
     def stop(self) -> None:
         """Signal all jobs to cease execution."""

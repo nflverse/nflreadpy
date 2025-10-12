@@ -33,6 +33,7 @@ from .compliance import (
     ResponsibleGamingControls,
 )
 from .dashboard import Dashboard, DashboardSnapshot, RiskSummary, TerminalDashboardSession
+from .dashboard_core import DashboardFilters, DashboardSearchState
 from .dashboard_tui import DashboardKeyboardController, run_curses_dashboard
 from .ingestion import OddsIngestionService
 from .models import (
@@ -63,6 +64,7 @@ from .scrapers.base import (
     decimal_to_fractional,
     fractional_to_american,
     fractional_to_decimal,
+    implied_probability_from_american,
     implied_probability_from_decimal,
     implied_probability_from_fractional,
 )
@@ -72,7 +74,9 @@ __all__ = [
     "AlertManager",
     "Dashboard",
     "DashboardKeyboardController",
+    "DashboardFilters",
     "DashboardSnapshot",
+    "DashboardSearchState",
     "TerminalDashboardSession",
     "ComplianceConfig",
     "ComplianceEngine",
@@ -112,6 +116,7 @@ __all__ = [
     "fractional_to_american",
     "fractional_to_decimal",
     "get_alert_manager",
+    "implied_probability_from_american",
     "implied_probability_from_decimal",
     "implied_probability_from_fractional",
     "consolidate_best_prices",

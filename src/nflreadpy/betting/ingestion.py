@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence
 
 from .alerts import AlertSink
+from .compliance import ComplianceConfig, ComplianceEngine
 from .normalization import NameNormalizer, default_normalizer
 from .scrapers.base import MultiScraperCoordinator, OddsQuote, SportsbookScraper
 from .scrapers.draftkings import DraftKingsScraper
@@ -62,6 +63,9 @@ class OddsIngestionService:
         stale_after: dt.timedelta = dt.timedelta(minutes=10),
         alert_sink: AlertSink | None = None,
         audit_logger: logging.Logger | None = None,
+        compliance_engine: ComplianceEngine | None = None,
+        compliance_config: ComplianceConfig | None = None,
+        future_tolerance: dt.timedelta = dt.timedelta(minutes=5),
     ) -> None:
         self.scrapers = list(scrapers or [])
         self.scrapers.extend(self._instantiate_scrapers(scraper_configs))
@@ -74,15 +78,26 @@ class OddsIngestionService:
         self._audit_logger = audit_logger or logging.getLogger(
             "nflreadpy.betting.audit"
         )
+        if compliance_engine and compliance_config:
+            raise ValueError(
+                "Provide either an existing compliance_engine or a compliance_config, not both."
+            )
+        if compliance_config is not None:
+            compliance_engine = ComplianceEngine(
+                compliance_config, audit_logger=self._audit_logger
+            )
+        self._compliance_engine = compliance_engine
         self._metrics: Dict[str, Any] = {
             "requested": 0,
             "persisted": 0,
             "discarded": {},
             "latency_seconds": 0.0,
             "per_scraper": {},
+            "collected_at": None,
         }
         self._last_validation_summary: Dict[str, int] = {}
         self._audit_logger = logging.getLogger("nflreadpy.betting.audit")
+        self._future_tolerance = future_tolerance
         self._init_db()
 
     @property
@@ -174,6 +189,7 @@ class OddsIngestionService:
         try:
             quotes = await self._coordinator.collect_once()
         except Exception as err:
+            logger.exception("Failed to collect odds quotes from scrapers")
             self._send_alert(
                 "Odds ingestion failure",
                 "Failed to collect odds quotes from scrapers.",
@@ -193,6 +209,7 @@ class OddsIngestionService:
                 discarded={},
                 latency_seconds=elapsed,
                 per_scraper=per_scraper,
+                collected_at=dt.datetime.now(dt.timezone.utc),
             )
             return []
 
@@ -200,15 +217,21 @@ class OddsIngestionService:
 
         if not valid_quotes:
             logger.info("All %d quotes discarded during validation", len(quotes))
+            discarded_summary = (
+                dict(self._last_validation_summary)
+                if self._last_validation_summary
+                else {"validation_failed": len(quotes)}
+            )
             self._update_metrics(
                 requested=len(quotes),
                 persisted=0,
-                discarded={"validation_failed": len(quotes)},
+                discarded=discarded_summary,
                 latency_seconds=elapsed,
                 per_scraper=per_scraper,
+                collected_at=dt.datetime.now(dt.timezone.utc),
             )
-            self._emit_validation_alert(len(quotes), self._last_validation_summary)
-            self._record_validation_failure(len(quotes), self._last_validation_summary)
+            self._emit_validation_alert(len(quotes), discarded_summary)
+            self._record_validation_failure(len(quotes), discarded_summary)
             return []
 
         payload = [
@@ -309,6 +332,7 @@ class OddsIngestionService:
             discarded=discarded_summary,
             latency_seconds=elapsed,
             per_scraper=per_scraper,
+            collected_at=dt.datetime.now(dt.timezone.utc),
         )
         if discarded_summary:
             self._emit_validation_alert(len(quotes), discarded_summary)
@@ -351,15 +375,6 @@ class OddsIngestionService:
                 valid.append(quote)
             else:
                 summary[reason] = summary.get(reason, 0) + 1
-                self._audit_logger.warning(
-                    "ingestion.discarded",
-                    extra={
-                        "reason": reason,
-                        "sportsbook": quote.sportsbook,
-                        "market": quote.market,
-                        "event_id": quote.event_id,
-                    },
-                )
                 logger.debug(
                     "Discarding quote from %s/%s (%s): %s",
                     quote.sportsbook,
@@ -378,9 +393,6 @@ class OddsIngestionService:
                 )
         self._last_validation_summary = dict(summary)
         if summary:
-            self._audit_logger.warning(
-                "ingestion.validation_failed", extra={"discarded": dict(summary)}
-            )
             logger.warning("Discarded quotes summary: %s", summary)
             self._audit_logger.warning(
                 "ingestion.validation_failed",
@@ -396,13 +408,16 @@ class OddsIngestionService:
         discarded: Mapping[str, int],
         latency_seconds: float,
         per_scraper: Mapping[str, Mapping[str, Any]],
+        collected_at: dt.datetime,
     ) -> None:
+        collected_at = collected_at.astimezone(dt.timezone.utc)
         metrics_snapshot = {
             "requested": requested,
             "persisted": persisted,
             "discarded": dict(discarded),
             "latency_seconds": latency_seconds,
             "per_scraper": {name: dict(details) for name, details in per_scraper.items()},
+            "collected_at": collected_at.isoformat(),
         }
         self._metrics = metrics_snapshot
         self._audit_logger.info(
@@ -413,6 +428,7 @@ class OddsIngestionService:
                 "discarded": dict(discarded),
                 "latency_seconds": latency_seconds,
                 "per_scraper": metrics_snapshot["per_scraper"],
+                "collected_at": metrics_snapshot["collected_at"],
             },
         )
 
@@ -436,8 +452,24 @@ class OddsIngestionService:
         observed = quote.observed_at
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=dt.timezone.utc)
+        observed = observed.astimezone(dt.timezone.utc)
         if observed < reference_time - self._stale_after:
             return "stale"
+        if self._compliance_engine:
+            compliant, reasons = self._compliance_engine.evaluate_metadata(
+                sportsbook=quote.sportsbook,
+                market=quote.market,
+                event_id=quote.event_id,
+                metadata=quote.extra if isinstance(quote.extra, Mapping) else None,
+                log=True,
+            )
+            if not compliant:
+                reason = "non_compliant"
+                if reasons:
+                    reason = "non_compliant:" + ";".join(reasons)
+                return reason
+        if observed > reference_time + self._future_tolerance:
+            return "future_timestamp"
         return None
 
     def _maybe_alert_on_scraper_failures(

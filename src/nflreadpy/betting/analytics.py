@@ -273,12 +273,12 @@ class KellyCriterion:
 
     fractional_kelly: float = 1.0
     cap: float | None = None
+    _last_fraction: float | None = dataclasses.field(init=False, default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.fractional_kelly = max(0.0, float(self.fractional_kelly))
         if self.cap is not None:
             self.cap = max(0.0, float(self.cap))
-        self._last_fraction: float | None = None
 
     @property
     def last_fraction(self) -> float | None:

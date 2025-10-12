@@ -98,6 +98,21 @@ class AnalyticsConfig(BaseModel):
     iterations: IterationConfig = Field(default_factory=IterationConfig)
 
 
+class FuzzyMatchingConfig(BaseModel):
+    """Feature flag and score thresholds for fuzzy identifier resolution."""
+
+    enabled: bool = False
+    score_thresholds: Dict[str, float] = Field(default_factory=dict)
+    ambiguity_margin: float = 5.0
+
+
+class NormalizationConfig(BaseModel):
+    """Controls for canonical identifier loading and fuzzy resolution."""
+
+    canonical_identifiers_path: str | None = "config/identifiers/betting_entities.json"
+    fuzzy: FuzzyMatchingConfig = Field(default_factory=FuzzyMatchingConfig)
+
+
 class BettingConfig(BaseModel):
     """Aggregate configuration for the betting stack."""
 
@@ -106,6 +121,7 @@ class BettingConfig(BaseModel):
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
+    normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 
 
 class ConfigurationError(ValueError):
@@ -312,6 +328,26 @@ def validate_betting_config(config: BettingConfig) -> list[str]:
         if value <= 0:
             errors.append(f"analytics.iterations.{name} must be greater than zero")
 
+    normalization = config.normalization
+    if normalization.canonical_identifiers_path is not None and not str(
+        normalization.canonical_identifiers_path
+    ).strip():
+        errors.append("normalization.canonical_identifiers_path cannot be empty")
+    fuzzy = normalization.fuzzy
+    if fuzzy.ambiguity_margin < 0:
+        errors.append("normalization.fuzzy.ambiguity_margin must be non-negative")
+    for domain, threshold in fuzzy.score_thresholds.items():
+        if threshold < 0 or threshold > 100:
+            errors.append(
+                "normalization.fuzzy.score_thresholds." +
+                f"{domain} must be between 0 and 100"
+            )
+    if fuzzy.enabled and not fuzzy.score_thresholds:
+        warnings.append(
+            "normalization.fuzzy.enabled is true but no score thresholds are defined; "
+            "default thresholds will be used"
+        )
+
     if errors:
         bullet_list = "\n".join(f"- {message}" for message in errors)
         raise ConfigurationError(f"Configuration validation failed:\n{bullet_list}")
@@ -432,9 +468,10 @@ __all__ = [
     "AnalyticsConfig",
     "BettingConfig",
     "ConfigurationError",
+    "FuzzyMatchingConfig",
     "IngestionConfig",
     "IterationConfig",
-    "ModelsConfig",
+    "NormalizationConfig",
     "SchedulerConfig",
     "ScopeScalingConfig",
     "ScraperConfig",

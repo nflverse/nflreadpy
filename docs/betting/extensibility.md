@@ -72,8 +72,8 @@ Register the model by exposing it through an entry point or listing it inside
   consistent features across offline training and online inference.
 - **Versioning**: Set the `model_version` attribute and log provenance metadata
   when emitting opportunities.
-- **Backtesting**: Use `nflreadpy-betting replay` to validate new models against
-  historical snapshots before promoting them to production.
+- **Backtesting**: Use `nflreadpy-betting backtest` to validate new models
+  against historical snapshots before promoting them to production.
 
 ## Analytics pipelines
 
@@ -105,9 +105,9 @@ analytics:
 
 - Write unit tests that mock external providers and assert the normalised data
   structure.
-- Use `pytest` fixtures to spin up the in-memory telemetry collector when
-  verifying metric emission.
-- Run `uv run nflreadpy-betting replay` against curated fixtures to compare model
+- Use `pytest` fixtures to stub alert sinks or storage backends when verifying
+  side effects.
+- Run `uv run nflreadpy-betting backtest` against curated fixtures to compare model
   output before and after changes.
 
 ## Distribution

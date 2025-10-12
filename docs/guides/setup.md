@@ -47,13 +47,18 @@ first access.
 
 ## Start the core services
 
-Launch the ingestion and analytics pipelines in separate terminals or via a supervisor. Each
-service exposes structured logging you can forward to your observability stack.
+Launch the ingestion and analytics pipelines in separate terminals or via a supervisor using the
+supported CLI commands. Each command emits structured logging you can forward to your observability
+stack.
 
 ```bash
-uv run python -m nflreadpy.betting.ingestion.service
-uv run python -m nflreadpy.betting.analytics.scheduler
+uv run nflreadpy-betting ingest --interval 60 --jitter 5
+uv run nflreadpy-betting simulate --refresh --iterations 25000
 ```
 
-Follow with `uv run nflreadpy-betting status` to confirm scraper connectivity, model health,
-and alert delivery before moving to production.
+Follow with a one-off scrape to verify connectivity, storage permissions, and alert delivery before
+moving to production:
+
+```bash
+uv run nflreadpy-betting ingest --interval 0 --retries 0
+```

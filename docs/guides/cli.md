@@ -88,7 +88,7 @@ uv run nflreadpy-betting backtest --limit 200 --iterations 5000
 
 | Flag | Description |
 | --- | --- |
-| `--limit` | Number of stored quotes to replay. |
+| `--limit` | Number of stored snapshots to evaluate. |
 | `--iterations` | Monte Carlo iterations used to rebuild simulations. |
 | `--value-threshold` | Minimum expected value to include in the report. |
 

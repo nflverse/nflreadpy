@@ -1,32 +1,50 @@
 # Configuration
 
-::: nflreadpy.config.NflreadpyConfig
-::: nflreadpy.config.update_config
-::: nflreadpy.config.get_config
-::: nflreadpy.config.reset_config
+nflreadpy centralises configuration through the `NflreadpyConfig` dataclass and
+helper functions that adjust caching, HTTP behaviour, and verbosity at runtime.
 
-## Betting Compliance
+## Core settings
 
-The betting toolkit exposes configuration objects that can be populated from
-YAML dictionaries or the process environment.  This makes it possible to apply
-jurisdiction-specific rules without changing code when deploying the system in
-regulated environments.
+The configuration exposes the following keys:
 
-::: nflreadpy.betting.compliance.ComplianceConfig
+| Field | Type | Description |
+| --- | --- | --- |
+| `cache_mode` | choices: `"memory"`, `"filesystem"`, `"off"` | Controls whether responses are cached in memory, written to disk, or disabled. |
+| `cache_path` | `Path` or `None` | Filesystem location used when `cache_mode="filesystem"`. |
+| `cache_duration` | `int` | Time-to-live in seconds before cached entries are refreshed. |
+| `request_timeout` | `int` | Timeout passed to `requests` when downloading datasets. |
+| `user_agent` | `str` | Custom user-agent string for outbound HTTP requests. |
+| `verbose` | `bool` | Enables progress bars and debug logging during downloads. |
 
-::: nflreadpy.betting.compliance.ResponsibleGamingControls
+Retrieve and mutate the configuration with the convenience helpers:
 
-::: nflreadpy.betting.compliance.ComplianceEngine
+```python
+import nflreadpy as nfl
 
-### YAML example
+config = nfl.get_config()
+print(config.cache_mode)
+
+nfl.update_config(cache_mode="filesystem", cache_path=".cache/nflreadpy", cache_duration=600)
+```
+
+Call `nfl.reset_config()` to restore defaults or set environment variables
+(`NFLREADPY_CACHE`, `NFLREADPY_CACHE_DIR`, `NFLREADPY_CACHE_DURATION`, etc.)
+before importing the package to override values globally.
+
+## Betting compliance extensions
+
+The betting module adds compliance and responsible gaming settings that are
+loaded from configuration files or the environment. These settings govern which
+sportsbooks may be queried, how pushes are handled, and what credentials must be
+present before placing wagers.
+
+Example YAML snippet:
 
 ```yaml
 betting:
   compliance:
     allowed_push_handling: ["push", "refund"]
-    jurisdiction_allowlist:
-      - nj
-      - ny
+    jurisdiction_allowlist: ["nj", "ny"]
     credential_requirements:
       fanduel: ["session_token", "account_id"]
       draftkings: ["api_key"]
@@ -39,25 +57,13 @@ betting:
     cooldown_seconds: 900
 ```
 
-### Environment variables
+Environment overrides follow the prefix `NFLREADPY_COMPLIANCE_` (for compliance
+fields) and `NFLREADPY_RESPONSIBLE_` (for responsible gaming). For example:
 
-The ``ComplianceConfig.from_env`` factory understands the following variables
-when the default ``NFLREADPY_COMPLIANCE_`` prefix is used:
+```bash
+export NFLREADPY_COMPLIANCE_JURISDICTION_ALLOWLIST=nj,ny
+export NFLREADPY_RESPONSIBLE_SESSION_LOSS_LIMIT=250
+```
 
-* ``NFLREADPY_COMPLIANCE_ALLOWED_PUSH_HANDLING`` – comma separated list of
-  accepted push handling treatments.
-* ``NFLREADPY_COMPLIANCE_REQUIRE_OVERTIME_INCLUDED`` – toggle requiring markets
-  to explicitly declare overtime handling (``1``/``0`` or ``true``/``false``).
-* ``NFLREADPY_COMPLIANCE_JURISDICTION_ALLOWLIST`` – comma separated list of
-  jurisdictions the bettor is authorised for.
-* ``NFLREADPY_COMPLIANCE_BANNED_SPORTSBOOKS`` – sportsbook names to block.
-* ``NFLREADPY_COMPLIANCE_REQUIRED_CREDENTIALS`` – JSON or semicolon-delimited
-  map (``fanduel:session_token,account_id;pinnacle:api_key``) describing the
-  credential fields that must be available per sportsbook.
-* ``NFLREADPY_COMPLIANCE_CREDENTIALS_AVAILABLE`` – JSON or semicolon-delimited
-  map indicating which credential fields are currently populated.
-
-The responsible gaming factory listens for the ``NFLREADPY_RESPONSIBLE_``
-prefix with keys ``SESSION_LOSS_LIMIT``, ``SESSION_STAKE_LIMIT`` and
-``COOLDOWN_SECONDS`` to cap session losses and automatically trigger cooling
-off periods in the :class:`~nflreadpy.betting.analytics.PortfolioManager`.
+These settings integrate with the betting portfolio manager to enforce exposure
+limits and pause betting activity when cooling-off rules are triggered.

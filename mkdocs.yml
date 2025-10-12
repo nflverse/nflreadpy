@@ -43,7 +43,12 @@ nav:
     - Cache Management: api/cache.md
     - Utilities: api/utils.md
   - Betting:
+    - Setup: betting/setup.md
+    - Configuration: betting/configuration.md
+    - CLI: betting/cli.md
     - Dashboards: betting/dashboard.md
+    - Developer Extension Points: betting/extensibility.md
+    - Operations: betting/operations.md
   - Changelog: CHANGELOG.md
   - Automation Status: https://nflreadr.nflverse.com/articles/nflverse_data_schedule.html
   - Data Dictionaries: https://nflreadr.nflverse.com/articles/index.html

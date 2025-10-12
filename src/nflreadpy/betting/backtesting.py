@@ -14,6 +14,7 @@ RowMapping = Mapping[str, Any]
 
 
 __all__ = [
+    "BacktestArtifacts",
     "BacktestMetrics",
     "Settlement",
     "SportsbookRules",
@@ -22,6 +23,7 @@ __all__ = [
     "export_reliability_diagram",
     "get_sportsbook_rules",
     "load_historical_snapshots",
+    "persist_backtest_reports",
     "reliability_table",
     "run_backtest",
     "settlements_to_frame",
@@ -103,6 +105,15 @@ class BacktestMetrics:
     average_log_loss: float
     average_crps: float
     settlements: Sequence[Settlement]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BacktestArtifacts:
+    """Persisted artefacts produced by a backtest run."""
+
+    metrics: BacktestMetrics
+    reliability_path: Path
+    closing_line_path: Path
 
 
 def load_historical_snapshots(path: str | Path) -> pl.DataFrame:
@@ -245,6 +256,50 @@ def closing_line_table(settlements: Sequence[Settlement]) -> pl.DataFrame:
     """Return the closing line comparison table."""
 
     return _closing_line_table(settlements)
+
+
+def persist_backtest_reports(
+    metrics: BacktestMetrics,
+    output_dir: str | Path,
+    *,
+    bins: int = 10,
+    reliability_filename: str = "reliability_diagram.csv",
+    closing_line_filename: str = "closing_line_report.csv",
+) -> BacktestArtifacts:
+    """Persist derived artefacts from a backtest run.
+
+    Parameters
+    ----------
+    metrics:
+        The metrics returned by :func:`run_backtest`.
+    output_dir:
+        Directory where the generated files will be stored.
+    bins:
+        Number of bins to use when building the reliability diagram table.
+    reliability_filename:
+        Name of the CSV file containing the reliability diagram data.
+    closing_line_filename:
+        Name of the CSV file containing the closing line efficiency report.
+    """
+
+    settlements = metrics.settlements
+    if not settlements:
+        raise ValueError("Cannot persist reports without settlements")
+
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+
+    reliability_path = destination / reliability_filename
+    closing_line_path = destination / closing_line_filename
+
+    export_reliability_diagram(settlements, reliability_path, bins=bins)
+    export_closing_line_report(settlements, closing_line_path)
+
+    return BacktestArtifacts(
+        metrics=metrics,
+        reliability_path=reliability_path,
+        closing_line_path=closing_line_path,
+    )
 
 
 def _settle_row(

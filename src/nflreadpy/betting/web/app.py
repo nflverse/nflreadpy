@@ -10,12 +10,13 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     import polars as pl
     from ..analytics import LineMovement
 
-from ..analytics import Opportunity, line_movement_summary
+    from ..backtesting import QuantumScenarioComparison
+
+from ..analytics import Opportunity
 from ..dashboard import Dashboard
 from ..dashboard_core import (
     DashboardFilters,
-    build_movement_series,
-    format_age,
+    LadderCell,
     is_half_scope,
     is_quarter_scope,
     normalize_scope,
@@ -85,6 +86,9 @@ class DashboardDataProvider(Protocol):
 
     def portfolio(self) -> Sequence[PortfolioPosition]:
         ...
+
+    def quantum_comparison(self) -> "QuantumScenarioComparison | None":  # pragma: no cover - optional
+        return None
 
 
 def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting Dashboard") -> None:
@@ -298,6 +302,69 @@ def run_dashboard(provider: DashboardDataProvider, *, title: str = "NFL Betting 
             f"Total stake: ${total_stake:,.2f} — Realized PnL: ${realized_pnl:,.2f}"
         )
         st.dataframe(_as_streamlit_data(portfolio_table), use_container_width=True)
+
+    st.header("Quantum Optimizer Backtest")
+    comparison = provider.quantum_comparison()
+    if comparison is None:
+        st.info("Quantum scenario analysis not available for the selected provider.")
+    else:
+        summary_frame = _quantum_summary_frame(comparison)
+        st.dataframe(_as_streamlit_data(summary_frame), use_container_width=True)
+        st.caption(
+            " | ".join(
+                [
+                    f"ΔEV: {comparison.delta_expected_value:.2f} units",
+                    f"ΔHit rate: {comparison.delta_hit_rate:.2%}",
+                    f"ΔMax drawdown: {comparison.delta_max_drawdown:.2%}",
+                ]
+            )
+        )
+        significance_bits: list[str] = []
+        if comparison.t_statistic is not None and comparison.t_p_value is not None:
+            significance_bits.append(
+                f"Paired t-test t={comparison.t_statistic:.3f}, p={comparison.t_p_value:.3f}"
+            )
+        if comparison.bootstrap_p_value is not None:
+            significance_bits.append(
+                f"Bootstrap p={comparison.bootstrap_p_value:.3f}"
+            )
+        if significance_bits:
+            st.caption(" | ".join(significance_bits))
+        distribution_frame = _quantum_distribution_frame(comparison)
+        if distribution_frame.height == 0:
+            st.info("No backtest distributions available.")
+        else:
+            st.vega_lite_chart(
+                {
+                    "data": {"values": distribution_frame.to_dicts()},
+                    "mark": {"type": "boxplot"},
+                    "encoding": {
+                        "x": {"field": "scenario", "type": "nominal", "title": "Scenario"},
+                        "y": {
+                            "field": "profit",
+                            "type": "quantitative",
+                            "title": "Per-event PnL",
+                        },
+                        "color": {"field": "scenario", "type": "nominal"},
+                        "tooltip": [
+                            {"field": "scenario", "type": "nominal"},
+                            {"field": "event_index", "type": "quantitative"},
+                            {"field": "profit", "type": "quantitative"},
+                        ],
+                    },
+                },
+                use_container_width=True,
+            )
+
+
+def _collect_options(
+    odds: Sequence[IngestedOdds],
+    opportunities: Sequence[Opportunity],
+) -> dict[str, list[str]]:
+    dashboard = Dashboard()
+    return dashboard.available_options(odds, opportunities)
+
+
 def _fallback_to_all(selected: Sequence[str], available: Sequence[str]) -> Iterable[str] | None:
     if not selected or len(selected) == len(available):
         return None
@@ -378,6 +445,60 @@ def _opportunities_table(opportunities: Sequence[Opportunity]) -> "pl.DataFrame"
             for opp in opportunities
         ]
     )
+
+
+def _quantum_summary_frame(
+    result: "QuantumScenarioComparison",
+) -> "pl.DataFrame":
+    pl = _lazy_polars()
+    return pl.DataFrame(
+        [
+            {
+                "scenario": result.baseline.name,
+                "expected_value": result.baseline.expected_value,
+                "realized_pnl": result.baseline.realized_pnl,
+                "hit_rate": result.baseline.hit_rate,
+                "average_drawdown": result.baseline.average_drawdown,
+                "max_drawdown": result.baseline.max_drawdown,
+            },
+            {
+                "scenario": result.quantum.name,
+                "expected_value": result.quantum.expected_value,
+                "realized_pnl": result.quantum.realized_pnl,
+                "hit_rate": result.quantum.hit_rate,
+                "average_drawdown": result.quantum.average_drawdown,
+                "max_drawdown": result.quantum.max_drawdown,
+            },
+            {
+                "scenario": "delta",
+                "expected_value": result.delta_expected_value,
+                "realized_pnl": result.quantum.realized_pnl
+                - result.baseline.realized_pnl,
+                "hit_rate": result.delta_hit_rate,
+                "average_drawdown": result.quantum.average_drawdown
+                - result.baseline.average_drawdown,
+                "max_drawdown": result.delta_max_drawdown,
+            },
+        ]
+    )
+
+
+def _quantum_distribution_frame(
+    result: "QuantumScenarioComparison",
+) -> "pl.DataFrame":
+    pl = _lazy_polars()
+    records: list[dict[str, object]] = []
+    for index, value in enumerate(result.baseline.per_event_profits):
+        records.append(
+            {"event_index": index, "scenario": result.baseline.name, "profit": value}
+        )
+    for index, value in enumerate(result.quantum.per_event_profits):
+        records.append(
+            {"event_index": index, "scenario": result.quantum.name, "profit": value}
+        )
+    for index, value in enumerate(result.profit_differences):
+        records.append({"event_index": index, "scenario": "difference", "profit": value})
+    return pl.DataFrame(records)
 
 
 def _line_history_frame(points: Sequence[LineMovementPoint]) -> "pl.DataFrame":
@@ -531,7 +652,7 @@ def _lazy_polars():  # type: ignore[no-untyped-def]
     return pl
 
 
-def _ladder_frame(ladder: dict[str, dict[float, int]]) -> "pl.DataFrame":
+def _ladder_frame(ladder: dict[str, dict[float, LadderCell]]) -> "pl.DataFrame":
     pl = _lazy_polars()
     if not ladder:
         return pl.DataFrame(schema={"line": pl.Float64})
@@ -542,20 +663,23 @@ def _ladder_frame(ladder: dict[str, dict[float, int]]) -> "pl.DataFrame":
         row: dict[str, object] = {"line": line}
         best_scope = _best_scope_for_line(ladder, line)
         for scope in scopes:
-            row[scope] = ladder[scope].get(line)
+            cell = ladder[scope].get(line)
+            row[scope] = cell.summary() if isinstance(cell, LadderCell) else None
         row["best_scope"] = best_scope
         records.append(row)
     return pl.DataFrame(records)
 
 
-def _best_scope_for_line(ladder: dict[str, dict[float, int]], line: float) -> str | None:
+def _best_scope_for_line(
+    ladder: dict[str, dict[float, LadderCell]], line: float
+) -> str | None:
     best_scope: str | None = None
     best_price: float | None = None
     for scope, entries in ladder.items():
-        odds_value = entries.get(line)
-        if odds_value is None:
+        cell = entries.get(line)
+        if cell is None:
             continue
-        decimal = american_to_decimal(odds_value)
+        decimal = american_to_decimal(cell.american_odds)
         if best_price is None or decimal > best_price:
             best_price = decimal
             best_scope = scope

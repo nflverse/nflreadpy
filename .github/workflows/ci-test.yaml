@@ -52,8 +52,23 @@ jobs:
           export NFLREADPY_BETTING__ingestion__storage_path="$RUNNER_TEMP/odds.sqlite3"
           uv run nflreadpy-betting ingest --config config/betting.yaml --interval 0
 
-      - name: Run tests
-        run: uv run pytest tests -vv
+      - name: Run tests with coverage
+        run: |
+          uv run pytest --cov --cov-report=xml --cov-report=html --cov-report=term-missing tests -vv
+
+      - name: Upload coverage XML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage.xml
+
+      - name: Upload coverage HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-${{ matrix.os }}-${{ matrix.python-version }}
+          path: htmlcov
 
   docs:
     runs-on: ubuntu-latest

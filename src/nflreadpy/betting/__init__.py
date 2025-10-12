@@ -23,9 +23,12 @@ from .analytics import (
     EdgeDetector,
     KellyCriterion,
     LineMovementAnalyzer,
-    line_movement_summary,
+    OptimizerComparisonResult,
     Opportunity,
+    PortfolioComparisonSide,
     PortfolioManager,
+    compare_optimizers,
+    persist_optimizer_comparison,
     consolidate_best_prices,
 )
 from .compliance import (
@@ -57,7 +60,14 @@ from .models import (
     XGBoostPlayerModel,
 )
 from .normalization import NameNormalizer
-from .quantum import QuantumPortfolioOptimizer
+from .quantum import (
+    QAOAHeuristicOptimizer,
+    QuantumPortfolioOptimizer,
+    SimulatedAnnealingOptimizer,
+    create_optimizer,
+    optimizer_registry,
+    register_optimizer,
+)
 from .scheduler import Scheduler
 from .scrapers.base import (
     MultiScraperCoordinator,
@@ -66,6 +76,7 @@ from .scrapers.base import (
     best_prices_by_selection,
 )
 from .scrapers.mock import MockSportsbookScraper
+from .scope_scaling import ScopeScalingModel
 from .utils import (
     american_to_decimal,
     american_to_fractional,
@@ -100,7 +111,7 @@ __all__ = [
     "HistoricalGameRecord",
     "KellyCriterion",
     "LineMovementAnalyzer",
-    "line_movement_summary",
+    "OptimizerComparisonResult",
     "MockSportsbookScraper",
     "MonteCarloEngine",
     "NGBoostPlayerModel",
@@ -112,12 +123,21 @@ __all__ = [
     "OddsQuote",
     "Opportunity",
     "PortfolioManager",
+    "PortfolioComparisonSide",
     "BankrollSimulationResult",
     "PlayerPropForecaster",
     "PlayerProjection",
+    "compare_optimizers",
+    "persist_optimizer_comparison",
     "QuantumPortfolioOptimizer",
+    "SimulatedAnnealingOptimizer",
+    "QAOAHeuristicOptimizer",
+    "create_optimizer",
+    "optimizer_registry",
+    "register_optimizer",
     "ProbabilityTriple",
     "SMSAlertSink",
+    "ScopeScalingModel",
     "SimulationBenchmark",
     "Scheduler",
     "SimulationResult",

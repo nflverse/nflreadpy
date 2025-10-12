@@ -2,7 +2,11 @@ import asyncio
 import datetime as dt
 from pathlib import Path
 
-from nflreadpy.betting.alerts import AlertManager, get_alert_manager, load_alert_config
+from nflreadpy.betting.alerts import (
+    AlertManager,
+    get_alert_manager,
+    load_alert_config,
+)
 from nflreadpy.betting.analytics import EdgeDetector, LineMovementAnalyzer
 from nflreadpy.betting.ingestion import IngestedOdds
 from nflreadpy.betting.models import GameSimulationConfig, MonteCarloEngine, TeamRating

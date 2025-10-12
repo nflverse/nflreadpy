@@ -20,7 +20,7 @@ AsyncCallable = Callable[[], Awaitable[Any]]
 class ScheduledJob:
     """Representation of a coroutine executed at an interval."""
 
-    name: str
+    name: str | None
     action: AsyncCallable
     interval: float
     jitter: float = 0.0

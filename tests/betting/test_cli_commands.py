@@ -4,77 +4,94 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import sys
 import types
 
 import pytest
 
-yaml_stub = types.ModuleType("yaml")
 
+def _build_yaml_stub() -> types.ModuleType:
+    yaml_stub = types.ModuleType("yaml")
 
-def _safe_load(stream):
-    text = stream.read() if hasattr(stream, "read") else str(stream)
-    data: dict[str, object] = {}
-    for line in str(text).splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        key = key.strip()
-        raw = value.strip().strip("'\"")
-        lowered = raw.lower()
-        if lowered in {"true", "false"}:
-            data[key] = lowered == "true"
-        else:
-            try:
-                data[key] = int(raw)
-            except ValueError:
+    def _safe_load(stream):
+        text = stream.read() if hasattr(stream, "read") else str(stream)
+        data: dict[str, object] = {}
+        for line in str(text).splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if ":" not in stripped:
+                continue
+            key, value = stripped.split(":", 1)
+            key = key.strip()
+            raw = value.strip().strip("'\"")
+            lowered = raw.lower()
+            if lowered in {"true", "false"}:
+                data[key] = lowered == "true"
+            else:
                 try:
-                    data[key] = float(raw)
+                    data[key] = int(raw)
                 except ValueError:
-                    data[key] = raw
-    return data
+                    try:
+                        data[key] = float(raw)
+                    except ValueError:
+                        data[key] = raw
+        return data
+
+    yaml_stub.safe_load = _safe_load  # type: ignore[attr-defined]
+    return yaml_stub
 
 
-yaml_stub.safe_load = _safe_load
-sys.modules.setdefault("yaml", yaml_stub)
+def _build_pydantic_stub() -> types.ModuleType:
+    pydantic_stub = types.ModuleType("pydantic")
 
-pydantic_stub = types.ModuleType("pydantic")
+    class _StubBaseModel:
+        def __init__(self, **values):
+            for key, value in values.items():
+                setattr(self, key, value)
+
+    def _stub_field(*, default=None, default_factory=None, **kwargs):  # type: ignore[override]
+        del kwargs
+        if default is not None:
+            return default
+        if default_factory is not None:
+            return default_factory()
+        return None
+
+    pydantic_stub.BaseModel = _StubBaseModel  # type: ignore[attr-defined]
+    pydantic_stub.Field = _stub_field  # type: ignore[attr-defined]
+    return pydantic_stub
 
 
-class _StubBaseModel:
-    def __init__(self, **values):
-        for key, value in values.items():
-            setattr(self, key, value)
+@pytest.fixture()
+def cli_module(monkeypatch: pytest.MonkeyPatch):
+    module_name = "nflreadpy.betting.cli"
+    monkeypatch.setitem(sys.modules, "yaml", _build_yaml_stub())
+    monkeypatch.setitem(sys.modules, "pydantic", _build_pydantic_stub())
 
-
-def _stub_field(*, default=None, default_factory=None, **kwargs):  # type: ignore[override]
-    del kwargs
-    if default is not None:
-        return default
-    if default_factory is not None:
-        return default_factory()
-    return None
-
-
-pydantic_stub.BaseModel = _StubBaseModel
-pydantic_stub.Field = _stub_field
-sys.modules.setdefault("pydantic", pydantic_stub)
+    importlib.invalidate_caches()
+    sys.modules.pop(module_name, None)
+    module = importlib.import_module(module_name)
 
 from nflreadpy.betting import cli  # noqa: E402 - requires patched dependencies above
+    try:
+        yield module
+    finally:
+        sys.modules.pop(module_name, None)
 
 
 @pytest.mark.parametrize("command", ["ingest", "simulate", "scan", "dashboard", "backtest"])
-def test_cli_parser_registers_subcommands(command: str) -> None:
-    parser = cli._build_parser()
+def test_cli_parser_registers_subcommands(cli_module, command: str) -> None:
+    parser = cli_module._build_parser()
     args = parser.parse_args([command])
     assert args.command == command
     assert asyncio.iscoroutinefunction(args.handler)
 
 
-def test_ingest_command_uses_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ingest_command_uses_scheduler(
+    cli_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
     events: list[str] = []
 
     class DummyService:
@@ -137,10 +154,14 @@ def test_ingest_command_uses_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
         created["scheduler"] = scheduler
         return scheduler
 
-    monkeypatch.setattr(cli, "Scheduler", scheduler_factory)
-    monkeypatch.setattr(cli, "install_signal_handlers", lambda callback: events.append("signals"))
+    monkeypatch.setattr(cli_module, "Scheduler", scheduler_factory)
+    monkeypatch.setattr(
+        cli_module, "install_signal_handlers", lambda callback: events.append("signals")
+    )
 
-    context = cli.CommandContext(service=DummyService(), alert_manager=None, config=object())
+    context = cli_module.CommandContext(
+        service=DummyService(), alert_manager=None, config=object()
+    )
     args = argparse.Namespace(
         interval=1.0,
         jitter=0.25,
@@ -149,7 +170,7 @@ def test_ingest_command_uses_scheduler(monkeypatch: pytest.MonkeyPatch) -> None:
         storage=":memory:",
     )
 
-    asyncio.run(cli._cmd_ingest(context, args))
+    asyncio.run(cli_module._cmd_ingest(context, args))
 
     assert "fetched" in events
     assert "signals" in events

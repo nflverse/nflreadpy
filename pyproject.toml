@@ -53,6 +53,7 @@ dev = [
     "pre-commit>=3.0.0",
     "types-requests>=2.32.4.20250809",
     "types-tqdm>=4.67.0.20250809",
+    "types-PyYAML>=6.0.12.20240808",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.24.0",
@@ -69,6 +70,7 @@ dev = [
     "pre-commit>=3.0.0",
     "types-requests>=2.32.4.20250809",
     "types-tqdm>=4.67.0.20250809",
+    "types-PyYAML>=6.0.12.20240808",
     "mkdocs>=1.6.1",
     "mkdocs-material>=9.0.0",
     "mkdocstrings[python]>=0.24.0",
@@ -122,6 +124,14 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "nflreadpy.betting.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "nflreadpy.betting.models"
+follow_imports = "normal"
 
 [tool.pytest.ini_options]
 minversion = "7.0"

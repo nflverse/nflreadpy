@@ -172,3 +172,23 @@ def test_get_alert_manager_respects_global_cache(monkeypatch) -> None:
     manager1 = get_alert_manager(None)
     manager2 = get_alert_manager(None)
     assert manager1 is manager2
+
+
+def test_ingestion_health_alert_on_failure() -> None:
+    sink = RecordingSink()
+    manager = AlertManager([sink])
+    metrics = {"requested": 10, "persisted": 0, "discarded": {"stale": 10}}
+    manager.notify_ingestion_health(metrics)
+    assert sink.messages
+    subject, body, metadata = sink.messages[0]
+    assert "Ingestion" in subject
+    assert "10" in body
+    assert metadata == {"requested": 10, "persisted": 0, "discarded": {"stale": 10}}
+
+
+def test_ingestion_health_no_alert_when_clean() -> None:
+    sink = RecordingSink()
+    manager = AlertManager([sink])
+    metrics = {"requested": 5, "persisted": 5, "discarded": {}}
+    manager.notify_ingestion_health(metrics)
+    assert sink.messages == []

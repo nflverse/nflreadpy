@@ -123,6 +123,14 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 
+[[tool.mypy.overrides]]
+module = "nflreadpy.betting.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "nflreadpy.betting.models"
+follow_imports = "normal"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --strict-markers --strict-config"

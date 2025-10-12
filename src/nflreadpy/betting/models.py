@@ -4,76 +4,135 @@ from __future__ import annotations
 
 import collections
 import dataclasses
+import importlib
 import itertools
 import logging
 import math
 import random
 import statistics
 import time
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
+from types import ModuleType
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    MutableMapping,
+    Sequence,
+    SupportsFloat,
+    SupportsInt,
+    SupportsIndex,
+    Tuple,
+    TypeAlias,
+    cast,
+)
 
+JaxArray: TypeAlias = Any
+NDArrayFloat: TypeAlias = Any
+
+
+_np: ModuleType | None
 try:  # Optional scientific backends
-    import numpy as _np  # type: ignore
+    _np = importlib.import_module("numpy")
 except Exception:  # pragma: no cover - numpy is optional
     _np = None
 
+_jax: ModuleType | None = None
+_jnp: ModuleType | None = None
+_jax_jit: Callable[..., Any] | None = None
+_jax_vmap: Callable[..., Any] | None = None
+_jax_device_get: Callable[[Any], Any] | None = None
+_jsp_special: ModuleType | None = None
 try:  # pragma: no cover - optional JAX acceleration backend
-    import jax as _jax  # type: ignore
-    import jax.numpy as _jnp  # type: ignore
-    from jax import jit as _jax_jit  # type: ignore
-    from jax import vmap as _jax_vmap  # type: ignore
-    from jax import device_get as _jax_device_get  # type: ignore
-    import jax.scipy.special as _jsp_special  # type: ignore
+    jax_module = importlib.import_module("jax")
+    jnp_module = importlib.import_module("jax.numpy")
+    jsp_module = importlib.import_module("jax.scipy.special")
+    _jax = jax_module
+    _jnp = jnp_module
+    _jsp_special = jsp_module
+    _jax_device_get = getattr(jax_module, "device_get")
+    _jax_jit = getattr(jax_module, "jit")
+    _jax_vmap = getattr(jax_module, "vmap")
 except Exception:  # pragma: no cover - optional dependency
     _jax = None
-    _jnp = None  # type: ignore[assignment]
-    _jax_jit = None  # type: ignore[assignment]
-    _jax_vmap = None  # type: ignore[assignment]
-    _jax_device_get = None  # type: ignore[assignment]
-    _jsp_special = None  # type: ignore[assignment]
+    _jnp = None
+    _jax_jit = None
+    _jax_vmap = None
+    _jax_device_get = None
+    _jsp_special = None
 
+_numba: ModuleType | None
 try:  # pragma: no cover - numba accelerates vectorised loops when available
-    import numba as _numba  # type: ignore
+    _numba = importlib.import_module("numba")
 except Exception:  # pragma: no cover - optional dependency
     _numba = None
 
 
+def _python_factorial(n: int) -> float:
+    result = 1.0
+    for value in range(2, n + 1):
+        result *= value
+    return result
+
+
+def _python_bivariate_poisson_kernel(
+    lam1: float,
+    lam2: float,
+    lam3: float,
+    max_home: int,
+    max_away: int,
+    factorial: Callable[[int], float],
+    np_module: ModuleType,
+) -> NDArrayFloat:
+    grid = np_module.zeros((max_home + 1, max_away + 1), dtype=np_module.float64)
+    base = math.exp(-(lam1 + lam2 + lam3))
+    for h in range(max_home + 1):
+        for a in range(max_away + 1):
+            total = 0.0
+            limit = min(h, a)
+            for k in range(limit + 1):
+                total += (
+                    base
+                    * (lam1 ** (h - k))
+                    / factorial(h - k)
+                    * (lam2 ** (a - k))
+                    / factorial(a - k)
+                    * (lam3**k)
+                    / factorial(k)
+                )
+            grid[h, a] = total
+    return grid
+
+
+_numba_factorial: Callable[[int], float] | None = None
+_numba_bivariate_poisson_kernel: (
+    Callable[[float, float, float, int, int], NDArrayFloat] | None
+) = None
 if _numba is not None and _np is not None:  # pragma: no cover - compiled at runtime
+    njit = getattr(_numba, "njit")
 
-    @_numba.njit(cache=True)
-    def _numba_factorial(n: int) -> float:
-        result = 1.0
-        for value in range(2, n + 1):
-            result *= value
-        return result
+    def _numba_factorial_impl(n: int) -> float:
+        return _python_factorial(n)
 
-    @_numba.njit(cache=True)
-    def _numba_bivariate_poisson_kernel(
+    compiled_factorial = njit(cache=True)(_numba_factorial_impl)
+
+    def _numba_kernel_impl(
         lam1: float, lam2: float, lam3: float, max_home: int, max_away: int
-    ):
-        grid = _np.zeros((max_home + 1, max_away + 1), dtype=_np.float64)
-        base = math.exp(-(lam1 + lam2 + lam3))
-        for h in range(max_home + 1):
-            for a in range(max_away + 1):
-                total = 0.0
-                limit = min(h, a)
-                for k in range(limit + 1):
-                    total += (
-                        base
-                        * (lam1 ** (h - k))
-                        / _numba_factorial(h - k)
-                        * (lam2 ** (a - k))
-                        / _numba_factorial(a - k)
-                        * (lam3**k)
-                        / _numba_factorial(k)
-                    )
-                grid[h, a] = total
-        return grid
+    ) -> NDArrayFloat:
+        assert _np is not None
+        return _python_bivariate_poisson_kernel(
+            lam1, lam2, lam3, max_home, max_away, compiled_factorial, _np
+        )
 
-else:  # pragma: no cover - fallback when numba unavailable
+    _numba_factorial = compiled_factorial
+    _numba_bivariate_poisson_kernel = njit(cache=True)(_numba_kernel_impl)
 
-    _numba_bivariate_poisson_kernel = None  # type: ignore[assignment]
 
+_jax_bivariate_poisson_kernel: (
+    Callable[[float, float, float, int, int], JaxArray] | None
+) = None
 
 if (
     _jnp is not None
@@ -82,16 +141,17 @@ if (
     and _jsp_special is not None
 ):
 
-    @_jax_jit(static_argnums=(3, 4))  # type: ignore[misc]
-    def _jax_bivariate_poisson_kernel(
+    def _jax_bivariate_poisson_kernel_impl(
         lam1: float, lam2: float, lam3: float, max_home: int, max_away: int
-    ):
+    ) -> JaxArray:
+        assert _jnp is not None and _jsp_special is not None and _jax_vmap is not None
         base = _jnp.exp(-(lam1 + lam2 + lam3))
 
-        def _factorial_term(value):
+        def _factorial_term(value: JaxArray) -> JaxArray:
             return _jnp.exp(_jsp_special.gammaln(value + 1.0))
 
-        def compute_entry(home_count: int, away_count: int):
+        def compute_entry(home_count: int, away_count: int) -> JaxArray:
+            assert _jnp is not None and _jax_vmap is not None
             limit = _jnp.minimum(home_count, away_count)
             ks = _jnp.arange(limit + 1, dtype=_jnp.int32)
             home_exponent = _jnp.maximum(0, home_count - ks).astype(_jnp.float64)
@@ -113,9 +173,10 @@ if (
         grid = _jax_vmap(row_fn)(home_range)
         return grid
 
-else:  # pragma: no cover - fallback when JAX unavailable
-
-    _jax_bivariate_poisson_kernel = None  # type: ignore[assignment]
+    _jax_bivariate_poisson_kernel = cast(
+        Callable[[float, float, float, int, int], JaxArray],
+        _jax_jit(static_argnums=(3, 4))(_jax_bivariate_poisson_kernel_impl),
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -152,7 +213,7 @@ class HistoricalGameRecord:
 
 
 def build_historical_records(
-    history: Iterable[HistoricalGameRecord | Mapping[str, object]]
+    history: Iterable[HistoricalGameRecord | Mapping[str, object] | object],
 ) -> List[HistoricalGameRecord]:
     """Normalise iterable data into :class:`HistoricalGameRecord` instances.
 
@@ -166,7 +227,9 @@ def build_historical_records(
         if isinstance(row, HistoricalGameRecord):
             records.append(row)
             continue
-        if not isinstance(row, Mapping):
+        if isinstance(row, Mapping):
+            values: Mapping[str, object] = row
+        else:
             values = {
                 "home_team": getattr(row, "home_team"),
                 "away_team": getattr(row, "away_team"),
@@ -179,20 +242,26 @@ def build_historical_records(
                 "away_offense_rating": getattr(row, "away_offense_rating", 0.0),
                 "away_defense_rating": getattr(row, "away_defense_rating", 0.0),
             }
-        else:
-            values = row
         records.append(
             HistoricalGameRecord(
-                home_team=str(values["home_team"]),
-                away_team=str(values["away_team"]),
-                home_points=int(values["home_points"]),
-                away_points=int(values["away_points"]),
-                home_pace=float(values.get("home_pace", 60.0)),
-                away_pace=float(values.get("away_pace", 60.0)),
-                home_offense_rating=float(values.get("home_offense_rating", 0.0)),
-                home_defense_rating=float(values.get("home_defense_rating", 0.0)),
-                away_offense_rating=float(values.get("away_offense_rating", 0.0)),
-                away_defense_rating=float(values.get("away_defense_rating", 0.0)),
+                home_team=_coerce_str(values.get("home_team"), "home_team"),
+                away_team=_coerce_str(values.get("away_team"), "away_team"),
+                home_points=_coerce_int(values.get("home_points"), "home_points"),
+                away_points=_coerce_int(values.get("away_points"), "away_points"),
+                home_pace=_coerce_float(values.get("home_pace"), "home_pace", 60.0),
+                away_pace=_coerce_float(values.get("away_pace"), "away_pace", 60.0),
+                home_offense_rating=_coerce_float(
+                    values.get("home_offense_rating"), "home_offense_rating", 0.0
+                ),
+                home_defense_rating=_coerce_float(
+                    values.get("home_defense_rating"), "home_defense_rating", 0.0
+                ),
+                away_offense_rating=_coerce_float(
+                    values.get("away_offense_rating"), "away_offense_rating", 0.0
+                ),
+                away_defense_rating=_coerce_float(
+                    values.get("away_defense_rating"), "away_defense_rating", 0.0
+                ),
             )
         )
     return records
@@ -277,6 +346,72 @@ def _scope_factor(scope: str) -> float:
     return 1.0
 
 
+def _coerce_str(value: object | None, field: str) -> str:
+    if value is None:
+        raise TypeError(f"Missing required field {field}")
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _coerce_optional_str(value: object | None, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
+def _coerce_int(value: object | None, field: str) -> int:
+    if value is None:
+        raise TypeError(f"Missing required field {field}")
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, (float, str)):
+        return int(value)
+    if isinstance(value, (SupportsInt, SupportsIndex)):
+        return int(value)
+    raise TypeError(
+        f"Field {field} expected int-compatible value, got {type(value).__name__}"
+    )
+
+
+def _coerce_float(value: object | None, field: str, default: float) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return float(value)
+    if isinstance(value, SupportsFloat):
+        return float(value)
+    raise TypeError(
+        f"Field {field} expected float-compatible value, got {type(value).__name__}"
+    )
+
+
+def _coerce_str_sequence(value: object | None, field: str) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Iterable):
+        return [str(item) for item in value]
+    raise TypeError(
+        f"Field {field} must be an iterable of strings, got {type(value).__name__}"
+    )
+
+
+def _coerce_mapping(value: object | None) -> Mapping[str, object]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return value
+    raise TypeError(f"Expected mapping, got {type(value).__name__}")
+
+
 # ---------------------------------------------------------------------------
 # Simulation result container
 # ---------------------------------------------------------------------------
@@ -320,12 +455,16 @@ class SimulationResult:
             return 0.0
         return self.margin_distribution.get(0, 0.0) / total
 
-    def spread_probability(self, team: str, line: float, scope: str = "game") -> ProbabilityTriple:
+    def spread_probability(
+        self, team: str, line: float, scope: str = "game"
+    ) -> ProbabilityTriple:
         if scope == "game":
             return self._spread_probability_game(team, line)
         return self._spread_probability_scaled(team, line, scope)
 
-    def total_probability(self, side: str, line: float, scope: str = "game") -> ProbabilityTriple:
+    def total_probability(
+        self, side: str, line: float, scope: str = "game"
+    ) -> ProbabilityTriple:
         if scope == "game":
             return self._total_probability_game(side, line)
         return self._total_probability_scaled(side, line, scope)
@@ -360,7 +499,9 @@ class SimulationResult:
                 pushes += count
         return ProbabilityTriple(max(0.0, min(1.0, wins / total)), pushes / total)
 
-    def _spread_probability_scaled(self, team: str, line: float, scope: str) -> ProbabilityTriple:
+    def _spread_probability_scaled(
+        self, team: str, line: float, scope: str
+    ) -> ProbabilityTriple:
         mean, variance = _distribution_moments(self.margin_distribution)
         factor = _scope_factor(scope)
         adj_mean = mean * factor
@@ -388,9 +529,13 @@ class SimulationResult:
                     wins += count
                 elif total == line:
                     pushes += count
-        return ProbabilityTriple(max(0.0, min(1.0, wins / total_count)), pushes / total_count)
+        return ProbabilityTriple(
+            max(0.0, min(1.0, wins / total_count)), pushes / total_count
+        )
 
-    def _total_probability_scaled(self, side: str, line: float, scope: str) -> ProbabilityTriple:
+    def _total_probability_scaled(
+        self, side: str, line: float, scope: str
+    ) -> ProbabilityTriple:
         mean, variance = _distribution_moments(self.total_distribution)
         factor = _scope_factor(scope)
         adj_mean = mean * factor
@@ -401,9 +546,13 @@ class SimulationResult:
             win = _normal_cdf(line, adj_mean, adj_stdev)
         return ProbabilityTriple(max(0.0, min(1.0, win)))
 
-    def _team_total_probability_game(self, team: str, side: str, line: float) -> ProbabilityTriple:
+    def _team_total_probability_game(
+        self, team: str, side: str, line: float
+    ) -> ProbabilityTriple:
         distribution = (
-            self.home_score_distribution if team == self.home_team else self.away_score_distribution
+            self.home_score_distribution
+            if team == self.home_team
+            else self.away_score_distribution
         )
         wins = 0.0
         pushes = 0.0
@@ -427,7 +576,9 @@ class SimulationResult:
         self, team: str, side: str, line: float, scope: str
     ) -> ProbabilityTriple:
         distribution = (
-            self.home_score_distribution if team == self.home_team else self.away_score_distribution
+            self.home_score_distribution
+            if team == self.home_team
+            else self.away_score_distribution
         )
         mean, variance = _distribution_moments(distribution)
         factor = _scope_factor(scope)
@@ -609,8 +760,14 @@ class BivariatePoissonCalibrator:
             mean_log_pace=mean_log_pace,
             baseline_pace=baseline_pace,
             shared_rate=shared_rate,
-            team_home_pace={team: statistics.fmean(values) for team, values in team_home_pace.items()},
-            team_away_pace={team: statistics.fmean(values) for team, values in team_away_pace.items()},
+            team_home_pace={
+                team: statistics.fmean(values)
+                for team, values in team_home_pace.items()
+            },
+            team_away_pace={
+                team: statistics.fmean(values)
+                for team, values in team_away_pace.items()
+            },
         )
         self._calibration = calibration
         return calibration
@@ -619,8 +776,12 @@ class BivariatePoissonCalibrator:
         self, home_rating: TeamRating, away_rating: TeamRating
     ) -> BivariatePoissonParameters:
         calibration = self.fit()
-        pace_home = calibration.team_home_pace.get(home_rating.team, calibration.baseline_pace)
-        pace_away = calibration.team_away_pace.get(away_rating.team, calibration.baseline_pace)
+        pace_home = calibration.team_home_pace.get(
+            home_rating.team, calibration.baseline_pace
+        )
+        pace_away = calibration.team_away_pace.get(
+            away_rating.team, calibration.baseline_pace
+        )
         features_home = [
             home_rating.offensive_rating - calibration.mean_offense,
             away_rating.defensive_rating - calibration.mean_defense,
@@ -641,7 +802,9 @@ class BivariatePoissonCalibrator:
             log_lambda_away += coeff * value
         lambda_home = max(0.5, math.exp(log_lambda_home))
         lambda_away = max(0.5, math.exp(log_lambda_away))
-        pace_scale = math.sqrt(pace_home * pace_away) / max(1.0, calibration.baseline_pace)
+        pace_scale = math.sqrt(pace_home * pace_away) / max(
+            1.0, calibration.baseline_pace
+        )
         lambda_shared = max(1e-6, calibration.shared_rate * pace_scale)
         return BivariatePoissonParameters(
             lambda_home=lambda_home,
@@ -682,7 +845,8 @@ class BivariatePoissonEngine:
         self,
         ratings: Mapping[str, TeamRating],
         config: GameSimulationConfig | None = None,
-        historical_games: Sequence[HistoricalGameRecord | Mapping[str, object]] | None = None,
+        historical_games: Sequence[HistoricalGameRecord | Mapping[str, object]]
+        | None = None,
         backend: str = "auto",
     ) -> None:
         self.ratings = dict(ratings)
@@ -695,8 +859,16 @@ class BivariatePoissonEngine:
         )
         self.calibrator = BivariatePoissonCalibrator(history)
         self._numpy = _np if _np is not None else None
-        self._numba_kernel = _numba_bivariate_poisson_kernel if _numba_bivariate_poisson_kernel is not None else None
-        self._jax_kernel = _jax_bivariate_poisson_kernel if _jax_bivariate_poisson_kernel is not None else None
+        self._numba_kernel = (
+            _numba_bivariate_poisson_kernel
+            if _numba_bivariate_poisson_kernel is not None
+            else None
+        )
+        self._jax_kernel = (
+            _jax_bivariate_poisson_kernel
+            if _jax_bivariate_poisson_kernel is not None
+            else None
+        )
         requested = backend.lower()
         self._backend = "python"
         if requested not in {"auto", "python", "numpy", "numba", "jax"}:
@@ -714,7 +886,9 @@ class BivariatePoissonEngine:
                     "Numba backend requested but unavailable; falling back to python"
                 )
             if requested == "jax" and self._jax_kernel is None:
-                logger.warning("JAX backend requested but unavailable; falling back to python")
+                logger.warning(
+                    "JAX backend requested but unavailable; falling back to python"
+                )
             if requested == "numpy" and self._numpy is None:
                 logger.warning(
                     "Requested numpy backend but numpy is unavailable; falling back to python"
@@ -734,8 +908,18 @@ class BivariatePoissonEngine:
             for away in teams:
                 if home.team == away.team:
                     continue
-                pace_home = max(50.0, baseline_pace + 1.2 * home.offensive_rating - 0.4 * away.defensive_rating)
-                pace_away = max(50.0, baseline_pace + 1.2 * away.offensive_rating - 0.4 * home.defensive_rating)
+                pace_home = max(
+                    50.0,
+                    baseline_pace
+                    + 1.2 * home.offensive_rating
+                    - 0.4 * away.defensive_rating,
+                )
+                pace_away = max(
+                    50.0,
+                    baseline_pace
+                    + 1.2 * away.offensive_rating
+                    - 0.4 * home.defensive_rating,
+                )
                 home_points = max(
                     3,
                     int(
@@ -776,7 +960,9 @@ class BivariatePoissonEngine:
 
     # -- simulation API -----------------------------------------------------
 
-    def simulate_game(self, event_id: str, home_team: str, away_team: str) -> SimulationResult:
+    def simulate_game(
+        self, event_id: str, home_team: str, away_team: str
+    ) -> SimulationResult:
         home_rating = self.ratings[home_team]
         away_rating = self.ratings[away_team]
         params = self.calibrator.estimate_parameters(home_rating, away_rating)
@@ -870,7 +1056,9 @@ class BivariatePoissonEngine:
             for event_id, home_team, away_team in fixtures
         ]
 
-    def benchmark(self, games: Sequence[tuple[str, str, str]], repeats: int = 3) -> SimulationBenchmark:
+    def benchmark(
+        self, games: Sequence[tuple[str, str, str]], repeats: int = 3
+    ) -> SimulationBenchmark:
         start = time.perf_counter()
         simulations = 0
         for _ in range(repeats):
@@ -878,8 +1066,12 @@ class BivariatePoissonEngine:
                 self.simulate_game(event_id, home, away)
                 simulations += 1
         elapsed = time.perf_counter() - start
-        backend = self._backend if self._backend in {"numpy", "numba", "jax"} else "python"
-        benchmark = SimulationBenchmark(backend=backend, simulations_run=simulations, elapsed_seconds=elapsed)
+        backend = (
+            self._backend if self._backend in {"numpy", "numba", "jax"} else "python"
+        )
+        benchmark = SimulationBenchmark(
+            backend=backend, simulations_run=simulations, elapsed_seconds=elapsed
+        )
         if benchmark.per_minute < 1_000_000:
             if self._backend == "python" and self._numpy is not None:
                 suggestion = "numpy"
@@ -899,8 +1091,20 @@ class BivariatePoissonEngine:
     def _joint_score_distribution(
         self, params: BivariatePoissonParameters
     ) -> Dict[tuple[int, int], float]:
-        max_home = int(math.ceil(params.lambda_home + params.lambda_shared + 6 * math.sqrt(params.lambda_home + params.lambda_shared)))
-        max_away = int(math.ceil(params.lambda_away + params.lambda_shared + 6 * math.sqrt(params.lambda_away + params.lambda_shared)))
+        max_home = int(
+            math.ceil(
+                params.lambda_home
+                + params.lambda_shared
+                + 6 * math.sqrt(params.lambda_home + params.lambda_shared)
+            )
+        )
+        max_away = int(
+            math.ceil(
+                params.lambda_away
+                + params.lambda_shared
+                + 6 * math.sqrt(params.lambda_away + params.lambda_shared)
+            )
+        )
         max_home = max(max_home, 20)
         max_away = max(max_away, 20)
         if self._backend == "numba" and self._numba_kernel is not None:
@@ -922,10 +1126,12 @@ class BivariatePoissonEngine:
         lam3 = params.lambda_shared
         base = math.exp(-(lam1 + lam2 + lam3))
         factorial_cache: Dict[int, float] = {0: 1.0}
+
         def fact(n: int) -> float:
             if n not in factorial_cache:
                 factorial_cache[n] = math.factorial(n)
             return factorial_cache[n]
+
         distribution: Dict[tuple[int, int], float] = {}
         for home in range(max_home + 1):
             for away in range(max_away + 1):
@@ -1073,7 +1279,9 @@ class PlayerFeatureRow:
 class PlayerOutcomeModel:
     """Base class for player level predictive models."""
 
-    def __init__(self, markets: Sequence[str] | None = None, distribution: str = "normal") -> None:
+    def __init__(
+        self, markets: Sequence[str] | None = None, distribution: str = "normal"
+    ) -> None:
         self.markets = tuple(markets or [])
         self.distribution = distribution
         self._fitted = False
@@ -1081,7 +1289,9 @@ class PlayerOutcomeModel:
     def supports_market(self, market: str) -> bool:
         return not self.markets or market in self.markets
 
-    def fit(self, rows: Sequence[PlayerFeatureRow]) -> None:  # pragma: no cover - interface
+    def fit(
+        self, rows: Sequence[PlayerFeatureRow]
+    ) -> None:  # pragma: no cover - interface
         raise NotImplementedError
 
     def predict(
@@ -1109,7 +1319,9 @@ class PlayerOutcomeModel:
 class GLMPlayerModel(PlayerOutcomeModel):
     """Lightweight Gaussian GLM over hashed opponent/injury/weather features."""
 
-    def __init__(self, markets: Sequence[str] | None = None, distribution: str = "normal") -> None:
+    def __init__(
+        self, markets: Sequence[str] | None = None, distribution: str = "normal"
+    ) -> None:
         super().__init__(markets, distribution)
         self._coefficients: List[float] | None = None
         self._residual_variance: float = 25.0
@@ -1123,7 +1335,11 @@ class GLMPlayerModel(PlayerOutcomeModel):
         weights: List[float] = []
         self._mean_pace = statistics.fmean(row.pace for row in rows) if rows else 60.0
         for row in rows:
-            features.append(self._encode(row.player, row.opponent, row.injury_status, row.weather, row.pace))
+            features.append(
+                self._encode(
+                    row.player, row.opponent, row.injury_status, row.weather, row.pace
+                )
+            )
             targets.append(row.target)
             weights.append(row.weight)
         coefficients = _linear_regression(features, targets, weights)
@@ -1133,7 +1349,9 @@ class GLMPlayerModel(PlayerOutcomeModel):
             prediction = self._predict_raw(encoded)
             residuals.append(row.target - prediction)
         if residuals:
-            self._residual_variance = max(1e-6, statistics.fmean(res ** 2 for res in residuals))
+            self._residual_variance = max(
+                1e-6, statistics.fmean(res**2 for res in residuals)
+            )
         self._fitted = True
 
     def predict(
@@ -1147,10 +1365,10 @@ class GLMPlayerModel(PlayerOutcomeModel):
             return None
         encoded = self._encode(
             player,
-            str(features.get("opponent", "")),
-            float(features.get("injury_status", 0.0)),
-            float(features.get("weather", 0.0)),
-            float(features.get("pace", self._mean_pace)),
+            _coerce_optional_str(features.get("opponent")),
+            _coerce_float(features.get("injury_status"), "injury_status", 0.0),
+            _coerce_float(features.get("weather"), "weather", 0.0),
+            _coerce_float(features.get("pace"), "pace", self._mean_pace),
         )
         raw = self._predict_raw(encoded)
         factor = _scope_factor(scope)
@@ -1163,7 +1381,13 @@ class GLMPlayerModel(PlayerOutcomeModel):
         else:
             stdev = math.sqrt(self._residual_variance) * math.sqrt(max(factor, 1e-6))
             distribution = self.distribution
-        return PlayerProjection(player=player, market=market, mean=mean, stdev=stdev, distribution=distribution)
+        return PlayerProjection(
+            player=player,
+            market=market,
+            mean=mean,
+            stdev=stdev,
+            distribution=distribution,
+        )
 
     def covariance(
         self,
@@ -1179,17 +1403,17 @@ class GLMPlayerModel(PlayerOutcomeModel):
             return 0.0
         encoded_a = self._encode(
             player_a,
-            str(features_a.get("opponent", "")),
-            float(features_a.get("injury_status", 0.0)),
-            float(features_a.get("weather", 0.0)),
-            float(features_a.get("pace", self._mean_pace)),
+            _coerce_optional_str(features_a.get("opponent")),
+            _coerce_float(features_a.get("injury_status"), "injury_status", 0.0),
+            _coerce_float(features_a.get("weather"), "weather", 0.0),
+            _coerce_float(features_a.get("pace"), "pace", self._mean_pace),
         )
         encoded_b = self._encode(
             player_b,
-            str(features_b.get("opponent", "")),
-            float(features_b.get("injury_status", 0.0)),
-            float(features_b.get("weather", 0.0)),
-            float(features_b.get("pace", self._mean_pace)),
+            _coerce_optional_str(features_b.get("opponent")),
+            _coerce_float(features_b.get("injury_status"), "injury_status", 0.0),
+            _coerce_float(features_b.get("weather"), "weather", 0.0),
+            _coerce_float(features_b.get("pace"), "pace", self._mean_pace),
         )
         dot = sum(a * b for a, b in zip(encoded_a, encoded_b))
         norm_a = math.sqrt(sum(a**2 for a in encoded_a))
@@ -1226,7 +1450,9 @@ class GLMPlayerModel(PlayerOutcomeModel):
 class XGBoostPlayerModel(GLMPlayerModel):
     """Gradient boosted analogue built from GLM residuals."""
 
-    def __init__(self, markets: Sequence[str] | None = None, distribution: str = "normal") -> None:
+    def __init__(
+        self, markets: Sequence[str] | None = None, distribution: str = "normal"
+    ) -> None:
         super().__init__(markets, distribution)
         self._boost_term: float = 0.0
 
@@ -1276,7 +1502,9 @@ class XGBoostPlayerModel(GLMPlayerModel):
         features_a: Mapping[str, object],
         features_b: Mapping[str, object],
     ) -> float:
-        base = super().covariance(player_a, player_b, market, scope, features_a, features_b)
+        base = super().covariance(
+            player_a, player_b, market, scope, features_a, features_b
+        )
         return base * 1.1
 
 
@@ -1292,14 +1520,18 @@ class NGBoostPlayerModel(GLMPlayerModel):
         if not rows:
             return
         features = [
-            self._encode(row.player, row.opponent, row.injury_status, row.weather, row.pace)
+            self._encode(
+                row.player, row.opponent, row.injury_status, row.weather, row.pace
+            )
             for row in rows
         ]
         residuals = []
         for row, encoded in zip(rows, features):
             prediction = self._predict_raw(encoded)
             residuals.append((row.target - prediction) ** 2)
-        self._variance_coefficients = _linear_regression(features, residuals, [row.weight for row in rows])
+        self._variance_coefficients = _linear_regression(
+            features, residuals, [row.weight for row in rows]
+        )
 
     def predict(
         self,
@@ -1314,10 +1546,10 @@ class NGBoostPlayerModel(GLMPlayerModel):
         if self._variance_coefficients:
             encoded = self._encode(
                 player,
-                str(features.get("opponent", "")),
-                float(features.get("injury_status", 0.0)),
-                float(features.get("weather", 0.0)),
-                float(features.get("pace", self._mean_pace)),
+                _coerce_optional_str(features.get("opponent")),
+                _coerce_float(features.get("injury_status"), "injury_status", 0.0),
+                _coerce_float(features.get("weather"), "weather", 0.0),
+                _coerce_float(features.get("pace"), "pace", self._mean_pace),
             )
             variance = sum(
                 coeff * value
@@ -1339,7 +1571,9 @@ class NGBoostPlayerModel(GLMPlayerModel):
         features_a: Mapping[str, object],
         features_b: Mapping[str, object],
     ) -> float:
-        base = super().covariance(player_a, player_b, market, scope, features_a, features_b)
+        base = super().covariance(
+            player_a, player_b, market, scope, features_a, features_b
+        )
         return base * 1.25
 
 
@@ -1357,8 +1591,12 @@ class PlayerPropForecaster:
         models: Iterable[PlayerOutcomeModel] | None = None,
     ) -> None:
         self._projections: Dict[tuple[str, str], PlayerProjection] = {}
-        self._models: Dict[str, List[PlayerOutcomeModel]] = collections.defaultdict(list)
-        self._covariances: Dict[tuple[str, str, str], Dict[tuple[str, str, str], float]] = collections.defaultdict(dict)
+        self._models: Dict[str, List[PlayerOutcomeModel]] = collections.defaultdict(
+            list
+        )
+        self._covariances: Dict[
+            tuple[str, str, str], Dict[tuple[str, str, str], float]
+        ] = collections.defaultdict(dict)
         if projections:
             for projection in projections:
                 self.register_projection(projection)
@@ -1416,19 +1654,28 @@ class PlayerPropForecaster:
         self._covariances[key_b][key_a] = value
 
     def _learn_covariances(self, rows: Sequence[PlayerFeatureRow]) -> None:
-        games: Dict[tuple[str, str, str], Dict[str, Tuple[float, float]]] = collections.defaultdict(dict)
+        games: Dict[tuple[str, str, str], Dict[str, Tuple[float, float]]] = (
+            collections.defaultdict(dict)
+        )
         for row in rows:
             if not row.game_id:
                 continue
             key = (row.market, row.scope, row.game_id)
             games[key][row.player] = (row.target, row.weight)
-        aggregate: Dict[tuple[str, str, str, str], List[Tuple[float, float, float]]] = collections.defaultdict(list)
+        aggregate: Dict[tuple[str, str, str, str], List[Tuple[float, float, float]]] = (
+            collections.defaultdict(list)
+        )
         for (market, scope, _game_id), participants in games.items():
             if len(participants) < 2:
                 continue
-            for (player_a, (value_a, weight_a)), (player_b, (value_b, weight_b)) in itertools.combinations(participants.items(), 2):
+            for (player_a, (value_a, weight_a)), (
+                player_b,
+                (value_b, weight_b),
+            ) in itertools.combinations(participants.items(), 2):
                 weight = max(1e-6, (weight_a + weight_b) / 2.0)
-                aggregate[(market, scope, player_a, player_b)].append((value_a, value_b, weight))
+                aggregate[(market, scope, player_a, player_b)].append(
+                    (value_a, value_b, weight)
+                )
         for (market, scope, player_a, player_b), samples in aggregate.items():
             if len(samples) < 2:
                 continue
@@ -1452,10 +1699,13 @@ class PlayerPropForecaster:
             return 0.0
         mean_a = sum(value_a * weight for value_a, _, weight in samples) / total_weight
         mean_b = sum(value_b * weight for _, value_b, weight in samples) / total_weight
-        covariance = sum(
-            (value_a - mean_a) * (value_b - mean_b) * weight
-            for value_a, value_b, weight in samples
-        ) / total_weight
+        covariance = (
+            sum(
+                (value_a - mean_a) * (value_b - mean_b) * weight
+                for value_a, value_b, weight in samples
+            )
+            / total_weight
+        )
         return covariance
 
     def probability(
@@ -1467,18 +1717,20 @@ class PlayerPropForecaster:
         scope: str,
         extra: Mapping[str, object] | None = None,
     ) -> ProbabilityTriple:
-        extra = extra or {}
-        components = extra.get("components")
-        if components:
+        extra_mapping: Mapping[str, object] = extra or {}
+        component_names = _coerce_str_sequence(
+            extra_mapping.get("components"), "components"
+        )
+        if component_names:
             return self._composite_probability(
-                [str(component) for component in components],
+                component_names,
                 market,
                 side,
                 line,
                 scope,
-                extra,
+                extra_mapping,
             )
-        projection = self._resolve_projection(player, market, scope, extra)
+        projection = self._resolve_projection(player, market, scope, extra_mapping)
         if projection is None or line is None:
             return ProbabilityTriple(0.5)
         factor = _scope_factor(scope)
@@ -1511,7 +1763,8 @@ class PlayerPropForecaster:
         scope: str,
         extra: Mapping[str, object] | None = None,
     ) -> Tuple[float, float]:
-        projection = self._resolve_projection(player, market, scope, extra or {})
+        extra_mapping: Mapping[str, object] = extra or {}
+        projection = self._resolve_projection(player, market, scope, extra_mapping)
         if projection is None:
             return 0.0, 1.0
         factor = _scope_factor(scope)
@@ -1540,15 +1793,25 @@ class PlayerPropForecaster:
         total_mean = 0.0
         total_variance = 0.0
         stats: Dict[str, Tuple[float, float]] = {}
-        component_features = extra.get("component_features", {})
+        raw_component_features = _coerce_mapping(extra.get("component_features"))
+        component_features: Dict[str, Mapping[str, object]] = {}
+        for name, value in raw_component_features.items():
+            if isinstance(value, Mapping):
+                component_features[str(name)] = value
         for participant in components:
             participant_extra = component_features.get(participant, extra)
-            projection = self._resolve_projection(participant, market, scope, participant_extra)
-            mean, stdev = self.projection_stats(participant, market, scope, participant_extra)
+            projection = self._resolve_projection(
+                participant, market, scope, participant_extra
+            )
+            mean, stdev = self.projection_stats(
+                participant, market, scope, participant_extra
+            )
             stats[participant] = (mean, stdev)
             total_mean += mean
             total_variance += stdev**2
-        composite_mode = str(extra.get("composite_mode", "sum")).lower()
+        composite_mode = _coerce_optional_str(
+            extra.get("composite_mode"), "sum"
+        ).lower()
         if composite_mode == "either":
             return self._composite_probability_either(
                 components,
@@ -1588,7 +1851,11 @@ class PlayerPropForecaster:
     ) -> ProbabilityTriple:
         if line is None:
             return ProbabilityTriple(0.5)
-        component_features = extra.get("component_features", {})
+        raw_component_features = _coerce_mapping(extra.get("component_features"))
+        component_features: Dict[str, Mapping[str, object]] = {}
+        for name, value in raw_component_features.items():
+            if isinstance(value, Mapping):
+                component_features[str(name)] = value
         singles: Dict[str, ProbabilityTriple] = {}
         for participant in components:
             participant_features = dict(component_features.get(participant, extra))
@@ -1609,7 +1876,8 @@ class PlayerPropForecaster:
                 base *= 1.0 - singles[participant].win
             success_probability = 1.0 - base
         else:
-            np = _np  # type: ignore[assignment]
+            assert _np is not None
+            np = _np
             means = np.array([stats[name][0] for name in components], dtype=float)
             stdevs = np.array([stats[name][1] for name in components], dtype=float)
             covariance = np.eye(len(components), dtype=float)
@@ -1632,11 +1900,20 @@ class PlayerPropForecaster:
             covariance = covariance + jitter
             seed = abs(hash((tuple(components), market, scope))) % (2**32)
             rng = np.random.default_rng(seed)
-            samples = int(extra.get("simulation_samples", 4096))
+            if "simulation_samples" in extra:
+                samples = _coerce_int(
+                    extra.get("simulation_samples"), "simulation_samples"
+                )
+            else:
+                samples = 4096
             draws = rng.multivariate_normal(means, covariance, size=max(1, samples))
             successes = (draws >= line).any(axis=1)
             success_probability = float(np.mean(successes))
-        win = success_probability if side not in {"under", "no"} else 1.0 - success_probability
+        win = (
+            success_probability
+            if side not in {"under", "no"}
+            else 1.0 - success_probability
+        )
         win = max(0.0, min(1.0, win))
         return ProbabilityTriple(win)
 
@@ -1678,7 +1955,7 @@ class PlayerPropForecaster:
         projection = self._projections.get((player, base_market))
         if projection:
             return projection
-        features = extra or {}
+        features: Mapping[str, object] = extra or {}
         models = self._models.get(base_market, []) + self._models.get("*", [])
         for model in models:
             if not model.supports_market(base_market):
@@ -1688,9 +1965,15 @@ class PlayerPropForecaster:
                 self.register_projection(projection)
                 return projection
         if extra and "projection_mean" in extra:
-            mean = float(extra["projection_mean"])
-            stdev = float(extra.get("projection_stdev", max(5.0, mean * 0.2)))
-            distribution = str(extra.get("projection_distribution", "normal"))
+            mean = _coerce_float(extra.get("projection_mean"), "projection_mean", 0.0)
+            stdev = _coerce_float(
+                extra.get("projection_stdev"),
+                "projection_stdev",
+                max(5.0, mean * 0.2),
+            )
+            distribution = _coerce_optional_str(
+                extra.get("projection_distribution"), "normal"
+            )
             projection = PlayerProjection(
                 player=player,
                 market=base_market,
@@ -1718,14 +2001,13 @@ MonteCarloEngine = BivariatePoissonEngine
 # lightweight fallback for callers that still rely on it elsewhere in the stack.
 if not hasattr(random.Random, "poisson"):
 
-    def _poisson(self: random.Random, lam: float) -> int:  # type: ignore[override]
+    def _poisson(random_self: random.Random, lam: float) -> int:
         L = math.exp(-lam)
         k = 0
         p = 1.0
         while p > L:
             k += 1
-            p *= self.random()
+            p *= random_self.random()
         return k - 1
 
-    random.Random.poisson = _poisson  # type: ignore[attr-defined]
-
+    setattr(random.Random, "poisson", _poisson)

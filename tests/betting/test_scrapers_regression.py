@@ -11,6 +11,7 @@ from nflreadpy.betting.scrapers.base import (
 )
 from nflreadpy.betting.scrapers.draftkings import DraftKingsScraper
 from nflreadpy.betting.scrapers.fanduel import FanDuelScraper
+from nflreadpy.betting.scrapers.mock import MockSportsbookScraper
 from nflreadpy.betting.scrapers.pinnacle import PinnacleScraper
 
 
@@ -82,3 +83,53 @@ def test_best_price_aggregation_across_books(fresh_stub_client) -> None:
     assert best[ne_key].american_odds == -125
     assert best[nyj_key].sportsbook == "pinnacle"
     assert best[nyj_key].american_odds == 130
+
+
+def test_mock_scraper_seed_is_deterministic() -> None:
+    seeded_quotes = asyncio.run(MockSportsbookScraper(seed=123).fetch_lines())
+    repeat_seed_quotes = asyncio.run(MockSportsbookScraper(seed=123).fetch_lines())
+    comparable_fields = [
+        (
+            quote.event_id,
+            quote.market,
+            quote.scope,
+            quote.entity_type,
+            quote.team_or_player,
+            quote.side,
+            quote.line,
+            quote.american_odds,
+        )
+        for quote in seeded_quotes
+    ]
+    repeat_fields = [
+        (
+            quote.event_id,
+            quote.market,
+            quote.scope,
+            quote.entity_type,
+            quote.team_or_player,
+            quote.side,
+            quote.line,
+            quote.american_odds,
+        )
+        for quote in repeat_seed_quotes
+    ]
+    assert comparable_fields == repeat_fields
+
+    moneylines = {
+        (quote.event_id, quote.team_or_player): quote.american_odds
+        for quote in seeded_quotes
+        if quote.market == "moneyline" and quote.scope == "game"
+    }
+    assert moneylines == {
+        ("2024-NE-NYJ", "NE"): -185,
+        ("2024-NE-NYJ", "NYJ"): 185,
+        ("2024-DEN-KC", "DEN"): -105,
+        ("2024-DEN-KC", "KC"): 105,
+        ("2024-BUF-MIA", "BUF"): -185,
+        ("2024-BUF-MIA", "MIA"): 185,
+        ("2024-PHI-DAL", "PHI"): -110,
+        ("2024-PHI-DAL", "DAL"): 110,
+        ("2024-DET-GB", "DET"): -150,
+        ("2024-DET-GB", "GB"): 150,
+    }

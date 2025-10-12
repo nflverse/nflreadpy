@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import logging
 import random
@@ -27,37 +28,37 @@ class ScheduledJob:
     retry_backoff: float = 2.0
 
     async def run(self, stop_event: asyncio.Event) -> None:
+        """Execute ``action`` until ``stop_event`` is set."""
+
         attempt = 0
         while not stop_event.is_set():
             try:
                 await self.action()
                 attempt = 0
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
                 raise
-            except Exception as exc:  # pragma: no cover - logging path
+            except Exception:  # pragma: no cover - logging side effects
                 attempt += 1
-                logger.exception("Scheduled job %s failed: %s", self.name, exc)
-                if attempt > self.retries:
-                    attempt = 0
-                else:
-                    backoff = self.retry_backoff * attempt
+                logger.exception("Scheduled job %s failed", self.name)
+                if attempt <= self.retries:
+                    backoff = max(0.0, self.retry_backoff) * attempt
                     try:
                         await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+                        return
                     except asyncio.TimeoutError:
                         continue
-                    return
-            delay = self.interval
-            if self.jitter:
-                delta = random.uniform(-self.jitter, self.jitter)
-                delay = max(0.0, delay + delta)
+                attempt = 0
+            delay = max(0.0, self.interval)
             if delay == 0:
                 await asyncio.sleep(0)
                 continue
+            if self.jitter:
+                delay = max(0.0, delay + random.uniform(-self.jitter, self.jitter))
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                return
             except asyncio.TimeoutError:
                 continue
-            return
 
 
 class Scheduler:
@@ -106,19 +107,27 @@ class Scheduler:
             loop.create_task(job.run(self._stop_event), name=job.name)
             for job in self._jobs
         ]
+        stop_task = loop.create_task(self._stop_event.wait(), name="scheduler-stop")
         try:
-            await self._stop_event.wait()
+            await asyncio.wait(
+                [stop_task, *self._tasks],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
         finally:
+            stop_task.cancel()
+            with contextlib.suppress(Exception):
+                await stop_task
             await self.shutdown()
 
     async def shutdown(self) -> None:
         """Cancel running jobs and wait for them to exit."""
 
+        if not self._tasks:
+            return
         for task in self._tasks:
             if not task.done():
                 task.cancel()
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
+        await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
 

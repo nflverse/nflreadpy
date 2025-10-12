@@ -7,7 +7,19 @@ import asyncio
 import dataclasses
 import json
 from collections import defaultdict
-from typing import Awaitable, Callable, Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import (
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Protocol,
+    Sequence,
+    Tuple,
+    TypeVar,
+    cast,
+)
+from typing import runtime_checkable
 
 from . import (
     Dashboard,
@@ -48,7 +60,21 @@ class CommandContext:
     config: BettingConfig
 
 
-CommandHandler = Callable[[CommandContext, argparse.Namespace], Awaitable[None]]
+@runtime_checkable
+class ContextCommandHandler(Protocol):
+    async def __call__(self, context: CommandContext, args: argparse.Namespace) -> None:
+        """Execute a command that relies on a service context."""
+
+
+@runtime_checkable
+class ConfigCommandHandler(Protocol):
+    async def __call__(self, config: BettingConfig, args: argparse.Namespace) -> None:
+        """Execute a command that only needs configuration data."""
+
+
+CommandHandler = ContextCommandHandler | ConfigCommandHandler
+
+HandlerT = TypeVar("HandlerT", bound=CommandHandler)
 
 
 @dataclasses.dataclass(slots=True)
@@ -75,10 +101,14 @@ class CommandRegistry:
         help: str,
         configure: Callable[[argparse.ArgumentParser], None],
         requires_service: bool = True,
-    ) -> Callable[[CommandHandler], CommandHandler]:
+    ) -> Callable[[HandlerT], HandlerT]:
         """Register ``handler`` as a sub-command with configuration callback."""
 
-        def _decorator(handler: CommandHandler) -> CommandHandler:
+        def _decorator(handler: HandlerT) -> HandlerT:
+            if requires_service and not isinstance(handler, ContextCommandHandler):
+                raise TypeError("Service commands must accept a context")
+            if not requires_service and not isinstance(handler, ConfigCommandHandler):
+                raise TypeError("Config-only commands must accept a configuration object")
             self._commands.append(
                 CommandSpec(
                     name=name,
@@ -196,9 +226,9 @@ def _parse_correlation_limits(
     if values is None:
         return limits
     if isinstance(values, Mapping):
-        for group, raw_value in values.items():
+        for group, mapping_value in values.items():
             try:
-                limits[str(group)] = float(raw_value)
+                limits[str(group)] = float(mapping_value)
             except (TypeError, ValueError):
                 continue
         return limits
@@ -263,7 +293,7 @@ def _detect_opportunities(
             dataclasses.replace(opp, kelly_fraction=opp.kelly_fraction * fractional)
             for opp in opportunities
         ]
-    return consolidate_best_prices(opportunities)
+    return cast(List[Opportunity], consolidate_best_prices(opportunities))
 
 
 def _render_opportunities(opportunities: Sequence[Opportunity]) -> None:
@@ -350,7 +380,7 @@ def _line_movement(
         alert_manager=alert_manager,
         alert_threshold=threshold,
     )
-    return analyzer.summarise()
+    return cast(List[LineMovement], analyzer.summarise())
 
 
 def _print_line_movements(movements: Sequence[LineMovement]) -> None:
@@ -731,8 +761,9 @@ async def _dispatch(args: argparse.Namespace) -> None:
         environment=args.config_environment,
     )
     requires_service = getattr(args, "requires_service", True)
-    if not requires_service:
-        await args.handler(config, args)
+    handler: CommandHandler = args.handler
+    if isinstance(handler, ConfigCommandHandler):
+        await handler(config, args)
         return
 
     try:
@@ -754,7 +785,8 @@ async def _dispatch(args: argparse.Namespace) -> None:
         alert_manager=alert_manager,
     )
     context = CommandContext(service=service, alert_manager=alert_manager, config=config)
-    handler: CommandHandler = args.handler
+    if not isinstance(handler, ContextCommandHandler):  # pragma: no cover - safety net
+        raise TypeError("Command handler does not support service context")
     await handler(context, args)
 
 

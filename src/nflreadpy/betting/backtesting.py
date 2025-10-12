@@ -4,10 +4,54 @@ from __future__ import annotations
 
 import dataclasses
 import math
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Iterable, List, Mapping, Sequence
+from typing import Any
 
 import polars as pl
+
+RowMapping = Mapping[str, Any]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SportsbookRules:
+    """Encapsulate sportsbook-specific settlement behaviour."""
+
+    name: str
+    three_way_moneyline: bool = False
+    push_on_spread: bool = True
+    push_on_total: bool = True
+
+
+# A lightweight registry of sportsbook specific overrides.  Additional books can
+# be registered over time as we encounter differences in settlement behaviour.
+DEFAULT_SPORTSBOOK_RULES: Mapping[str, SportsbookRules] = {
+    "default": SportsbookRules(name="default"),
+    "testbook": SportsbookRules(name="testbook"),
+}
+
+
+def get_sportsbook_rules(
+    sportsbook: str,
+    overrides: Mapping[str, SportsbookRules] | None = None,
+) -> SportsbookRules:
+    """Return the settlement rules for ``sportsbook``.
+
+    Parameters
+    ----------
+    sportsbook:
+        Sportsbook name, case insensitive.
+    overrides:
+        Optional mapping of sportsbook names to :class:`SportsbookRules` which
+        take precedence over the built-in defaults.
+    """
+
+    key = sportsbook.lower()
+    if overrides is not None and key in overrides:
+        return overrides[key]
+    if key in DEFAULT_SPORTSBOOK_RULES:
+        return DEFAULT_SPORTSBOOK_RULES[key]
+    return DEFAULT_SPORTSBOOK_RULES["default"]
 
 
 @dataclasses.dataclass(slots=True)
@@ -59,7 +103,7 @@ def load_historical_snapshots(path: str | Path) -> pl.DataFrame:
     if not target.exists():
         raise FileNotFoundError(f"Snapshot path does not exist: {target}")
 
-    files: List[Path]
+    files: list[Path]
     if target.is_file():
         files = [target]
     else:
@@ -73,7 +117,7 @@ def load_historical_snapshots(path: str | Path) -> pl.DataFrame:
     if not files:
         raise ValueError(f"No snapshot files found under {target}")
 
-    frames: List[pl.DataFrame] = []
+    frames: list[pl.DataFrame] = []
     for file in files:
         if file.suffix.lower() == ".csv":
             frames.append(pl.read_csv(file))
@@ -87,10 +131,16 @@ def load_historical_snapshots(path: str | Path) -> pl.DataFrame:
     return pl.concat(frames, how="vertical_relaxed")
 
 
-def run_backtest(snapshots: pl.DataFrame) -> BacktestMetrics:
+def run_backtest(
+    snapshots: pl.DataFrame,
+    *,
+    sportsbook_rules: Mapping[str, SportsbookRules] | None = None,
+) -> BacktestMetrics:
     """Simulate settlements and compute summary metrics."""
 
-    settlements = list(simulate_settlements(snapshots))
+    settlements = list(
+        simulate_settlements(snapshots, sportsbook_rules=sportsbook_rules)
+    )
     if not settlements:
         raise ValueError("No settlements produced from snapshots")
 
@@ -107,7 +157,11 @@ def run_backtest(snapshots: pl.DataFrame) -> BacktestMetrics:
     )
 
 
-def simulate_settlements(snapshots: pl.DataFrame) -> Iterable[Settlement]:
+def simulate_settlements(
+    snapshots: pl.DataFrame,
+    *,
+    sportsbook_rules: Mapping[str, SportsbookRules] | None = None,
+) -> Iterable[Settlement]:
     """Yield :class:`Settlement` objects for each odds snapshot."""
 
     expected_columns = {
@@ -131,7 +185,7 @@ def simulate_settlements(snapshots: pl.DataFrame) -> Iterable[Settlement]:
         raise ValueError(f"Snapshots missing required columns: {sorted(missing)}")
 
     for row in snapshots.iter_rows(named=True):
-        settlement = _settle_row(row)
+        settlement = _settle_row(row, sportsbook_rules=sportsbook_rules)
         yield settlement
 
 
@@ -162,7 +216,11 @@ def export_closing_line_report(
     return output
 
 
-def _settle_row(row: Mapping[str, object]) -> Settlement:
+def _settle_row(
+    row: RowMapping,
+    *,
+    sportsbook_rules: Mapping[str, SportsbookRules] | None = None,
+) -> Settlement:
     market = str(row["market"]).lower()
     scope = str(row["scope"])
     side = row.get("side")
@@ -170,6 +228,7 @@ def _settle_row(row: Mapping[str, object]) -> Settlement:
         side = str(side)
 
     team_or_player = str(row["team_or_player"])
+    sportsbook = str(row["sportsbook"])
     home_team = str(row["home_team"])
     away_team = str(row["away_team"])
     home_score = float(row["home_score"])
@@ -183,6 +242,7 @@ def _settle_row(row: Mapping[str, object]) -> Settlement:
     closing_price_value = None if closing_price is None else int(closing_price)
     closing_line_value = None if closing_line is None else float(closing_line)
     probability = float(row["model_probability"])
+    rules = get_sportsbook_rules(sportsbook, overrides=sportsbook_rules)
 
     actual_outcome, state = _resolve_outcome(
         market,
@@ -193,6 +253,7 @@ def _settle_row(row: Mapping[str, object]) -> Settlement:
         away_team,
         home_score,
         away_score,
+        rules,
     )
     payout = _payout(price, stake_value, state)
     brier = (probability - actual_outcome) ** 2
@@ -202,7 +263,7 @@ def _settle_row(row: Mapping[str, object]) -> Settlement:
 
     return Settlement(
         event_id=str(row["event_id"]),
-        sportsbook=str(row["sportsbook"]),
+        sportsbook=sportsbook,
         team_or_player=team_or_player,
         market=market,
         scope=scope,
@@ -231,9 +292,14 @@ def _resolve_outcome(
     away_team: str,
     home_score: float,
     away_score: float,
+    rules: SportsbookRules,
 ) -> tuple[float, str]:
     market_key = market.lower()
     if market_key in {"moneyline", "winner"}:
+        if math.isclose(home_score, away_score, abs_tol=1e-9):
+            if rules.three_way_moneyline:
+                return 0.0, "loss"
+            return 0.5, "push"
         winner = home_team if home_score > away_score else away_team
         result = 1.0 if team_or_player == winner else 0.0
         return result, "win" if result == 1.0 else "loss"
@@ -243,7 +309,9 @@ def _resolve_outcome(
         margin = _team_margin(team_or_player, home_team, away_team, home_score, away_score)
         adjusted = margin + line
         if math.isclose(adjusted, 0.0, abs_tol=1e-9):
-            return 0.5, "push"
+            if rules.push_on_spread:
+                return 0.5, "push"
+            return 0.0, "loss"
         return (1.0, "win") if adjusted > 0 else (0.0, "loss")
     if market_key in {"total", "game_total"}:
         if line is None or side is None:
@@ -254,7 +322,9 @@ def _resolve_outcome(
         else:
             diff = line - total_points
         if math.isclose(diff, 0.0, abs_tol=1e-9):
-            return 0.5, "push"
+            if rules.push_on_total:
+                return 0.5, "push"
+            return 0.0, "loss"
         return (1.0, "win") if diff > 0 else (0.0, "loss")
     raise NotImplementedError(f"Unsupported market type: {market}")
 

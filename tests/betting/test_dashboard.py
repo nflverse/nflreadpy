@@ -5,6 +5,8 @@ import datetime as dt
 import pytest
 
 import nflreadpy.betting.analytics as analytics_module
+from nflreadpy.betting import dashboard as dashboard_module
+from nflreadpy.betting.analytics import Opportunity, PortfolioPosition
 from nflreadpy.betting.dashboard import (
     Dashboard,
     DashboardSnapshot,
@@ -13,8 +15,6 @@ from nflreadpy.betting.dashboard import (
 )
 from nflreadpy.betting.dashboard_core import build_ladder_matrix
 from nflreadpy.betting.dashboard_tui import DashboardKeyboardController
-from nflreadpy.betting import dashboard as dashboard_module
-from nflreadpy.betting.analytics import Opportunity, PortfolioPosition
 from nflreadpy.betting.ingestion import IngestedOdds
 from nflreadpy.betting.models import SimulationResult
 

@@ -1,6 +1,5 @@
 import asyncio
 import datetime as dt
-from typing import Dict, Type
 
 import pytest
 
@@ -28,9 +27,9 @@ from nflreadpy.betting.scrapers.pinnacle import PinnacleScraper
     ],
 )
 def test_scraper_normalises_quotes(
-    scraper_cls: Type[SportsbookScraper],
+    scraper_cls: type[SportsbookScraper],
     endpoint: str,
-    expected_prices: Dict[str, int],
+    expected_prices: dict[str, int],
     fresh_stub_client,
 ) -> None:
     scraper = scraper_cls(endpoint, client=fresh_stub_client, rate_limit_per_second=None)

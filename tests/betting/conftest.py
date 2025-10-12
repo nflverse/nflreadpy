@@ -1,8 +1,9 @@
 import copy
 import datetime as dt
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,6 @@ from nflreadpy.betting.scrapers.draftkings import DraftKingsScraper
 from nflreadpy.betting.scrapers.fanduel import FanDuelScraper
 from nflreadpy.betting.scrapers.pinnacle import PinnacleScraper
 
-
 FANDUEL_URL = "https://stub/fanduel"
 DRAFTKINGS_URL = "https://stub/draftkings"
 PINNACLE_URL = "https://stub/pinnacle"
@@ -25,7 +25,7 @@ PINNACLE_URL = "https://stub/pinnacle"
 
 class RecordingAlertSink(AlertSink):
     def __init__(self) -> None:
-        self.messages: List[Tuple[str, str, Mapping[str, Any] | None]] = []
+        self.messages: list[tuple[str, str, Mapping[str, Any] | None]] = []
 
     def send(
         self,
@@ -40,7 +40,7 @@ class RecordingAlertSink(AlertSink):
 class StubHTTPClient:
     def __init__(
         self,
-        responses: Dict[str, Dict[str, Any]],
+        responses: dict[str, dict[str, Any]],
         *,
         freshen: bool,
     ) -> None:
@@ -53,9 +53,9 @@ class StubHTTPClient:
         self,
         url: str,
         *,
-        params: Dict[str, Any] | None = None,
-        headers: Dict[str, str] | None = None,
-    ) -> Dict[str, Any]:
+        params: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         del params, headers
         self.calls.append(url)
         payload = copy.deepcopy(self._responses[url])
@@ -64,7 +64,7 @@ class StubHTTPClient:
         return payload
 
 
-def _refresh_event_timestamps(payload: Dict[str, Any], timestamp: str) -> None:
+def _refresh_event_timestamps(payload: dict[str, Any], timestamp: str) -> None:
     events = payload.get("events", [])
     for event in events:
         if "lastUpdated" in event:
@@ -79,7 +79,7 @@ def now() -> dt.datetime:
 
 
 @pytest.fixture()
-def sportsbook_payloads() -> Dict[str, Dict[str, Any]]:
+def sportsbook_payloads() -> dict[str, dict[str, Any]]:
     payload_dir = Path(__file__).parent / "payloads"
     return {
         FANDUEL_URL: json.loads((payload_dir / "fanduel.json").read_text()),
@@ -89,17 +89,17 @@ def sportsbook_payloads() -> Dict[str, Dict[str, Any]]:
 
 
 @pytest.fixture()
-def fresh_stub_client(sportsbook_payloads: Dict[str, Dict[str, Any]]) -> StubHTTPClient:
+def fresh_stub_client(sportsbook_payloads: dict[str, dict[str, Any]]) -> StubHTTPClient:
     return StubHTTPClient(sportsbook_payloads, freshen=True)
 
 
 @pytest.fixture()
-def stale_stub_client(sportsbook_payloads: Dict[str, Dict[str, Any]]) -> StubHTTPClient:
+def stale_stub_client(sportsbook_payloads: dict[str, dict[str, Any]]) -> StubHTTPClient:
     return StubHTTPClient(sportsbook_payloads, freshen=False)
 
 
 @pytest.fixture()
-def http_scrapers(fresh_stub_client: StubHTTPClient) -> List[SportsbookScraper]:
+def http_scrapers(fresh_stub_client: StubHTTPClient) -> list[SportsbookScraper]:
     return [
         FanDuelScraper(FANDUEL_URL, client=fresh_stub_client, rate_limit_per_second=None),
         DraftKingsScraper(
@@ -110,7 +110,7 @@ def http_scrapers(fresh_stub_client: StubHTTPClient) -> List[SportsbookScraper]:
 
 
 @pytest.fixture()
-def scraper_configs(stale_stub_client: StubHTTPClient) -> List[Dict[str, Any]]:
+def scraper_configs(stale_stub_client: StubHTTPClient) -> list[dict[str, Any]]:
     return [
         {
             "type": "fanduel",
@@ -139,7 +139,7 @@ def alert_sink() -> RecordingAlertSink:
 
 
 @pytest.fixture()
-def static_quotes(now: dt.datetime) -> List[OddsQuote]:
+def static_quotes(now: dt.datetime) -> list[OddsQuote]:
     return [
         OddsQuote(
             event_id="2024-NE-NYJ",
@@ -232,7 +232,7 @@ def static_quotes(now: dt.datetime) -> List[OddsQuote]:
 
 
 @pytest.fixture()
-def static_scraper(static_quotes: List[OddsQuote]) -> StaticScraper:
+def static_scraper(static_quotes: list[OddsQuote]) -> StaticScraper:
     return StaticScraper("testbook", static_quotes)
 
 

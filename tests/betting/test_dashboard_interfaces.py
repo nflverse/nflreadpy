@@ -21,7 +21,6 @@ from nflreadpy.betting.web import (
     PortfolioPosition,
     run_dashboard,
 )
-
 from nflreadpy.betting.web.app import (
     _calibration_frame,
     _line_history_frame,

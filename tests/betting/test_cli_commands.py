@@ -74,6 +74,7 @@ def cli_module(monkeypatch: pytest.MonkeyPatch):
     sys.modules.pop(module_name, None)
     module = importlib.import_module(module_name)
 
+from nflreadpy.betting import cli  # noqa: E402 - requires patched dependencies above
     try:
         yield module
     finally:
@@ -106,7 +107,7 @@ def test_ingest_command_uses_scheduler(
             self.jobs: list[dict[str, object]] = []
             events.append("initialised")
 
-        async def __aenter__(self) -> "DummyScheduler":
+        async def __aenter__(self) -> DummyScheduler:
             events.append("entered")
             return self
 

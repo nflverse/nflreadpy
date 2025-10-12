@@ -16,8 +16,8 @@ from nflreadpy.betting.backtesting import (
     load_historical_snapshots,
     reliability_table,
     run_backtest,
-    simulate_settlements,
     settlements_to_frame,
+    simulate_settlements,
 )
 
 DATA_PATH = Path(__file__).parent / "data" / "historical_snapshots.csv"

@@ -1,5 +1,4 @@
 """Unit tests covering individual alert sink implementations."""
-
 from __future__ import annotations
 
 import json
@@ -7,7 +6,7 @@ from email.message import EmailMessage
 
 import pytest
 
-from nflreadpy.betting.alerts import EmailAlertSink, SMSAlertSink, SlackAlertSink
+from nflreadpy.betting.alerts import EmailAlertSink, SlackAlertSink, SMSAlertSink
 
 
 def test_slack_alert_sink_formats_payload() -> None:

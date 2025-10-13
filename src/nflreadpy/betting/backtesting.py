@@ -905,19 +905,21 @@ def _scenario_performance(
 
 def _paired_t_test(differences: Sequence[float]) -> tuple[float | None, float | None]:
     n = len(differences)
-    if n == 0:
+    if n < 2:
         return None, None
     mean = statistics.fmean(differences)
-    variance = statistics.pvariance(differences, mu=mean) if n > 1 else 0.0
+    variance = statistics.variance(differences, mean)
     if variance == 0.0:
-        return 0.0, 1.0
+        return None, None
     standard_error = math.sqrt(variance / n)
     if standard_error == 0.0:
-        return 0.0, 1.0
+        return None, None
     t_statistic = mean / standard_error
-    # Normal approximation for the two-sided p-value.
-    normal = statistics.NormalDist()
-    p_value = 2.0 * (1.0 - normal.cdf(abs(t_statistic)))
+    degrees_of_freedom = n - 1
+    cdf = _student_t_cdf(abs(t_statistic), degrees_of_freedom)
+    if cdf is None:
+        return t_statistic, None
+    p_value = 2.0 * (1.0 - cdf)
     return t_statistic, p_value
 
 
@@ -937,6 +939,87 @@ def _bootstrap_difference(
         if sum(sample) >= 0:
             successes += 1
     return successes / iterations
+
+
+def _student_t_cdf(value: float, degrees_of_freedom: int) -> float | None:
+    if degrees_of_freedom <= 0:
+        return None
+    if math.isnan(value):
+        return None
+    if math.isinf(value):
+        return 1.0 if value > 0 else 0.0
+    if value == 0:
+        return 0.5
+    if value < 0:
+        return 1.0 - _student_t_cdf(-value, degrees_of_freedom)
+
+    x = degrees_of_freedom / (degrees_of_freedom + value * value)
+    incomplete = _regularized_incomplete_beta(x, degrees_of_freedom / 2.0, 0.5)
+    if incomplete is None:
+        return None
+    return 1.0 - 0.5 * incomplete
+
+
+def _regularized_incomplete_beta(x: float, a: float, b: float) -> float | None:
+    if not 0.0 <= x <= 1.0:
+        return None
+    if x == 0.0:
+        return 0.0
+    if x == 1.0:
+        return 1.0
+
+    log_beta = math.lgamma(a) + math.lgamma(b) - math.lgamma(a + b)
+    bt = math.exp(a * math.log(x) + b * math.log(1.0 - x) - log_beta)
+
+    if x < (a + 1.0) / (a + b + 2.0):
+        return bt * _beta_continued_fraction(a, b, x) / a
+    return 1.0 - bt * _beta_continued_fraction(b, a, 1.0 - x) / b
+
+
+def _beta_continued_fraction(a: float, b: float, x: float) -> float:
+    max_iterations = 200
+    epsilon = 3.0e-7
+    tiny = 1.0e-30
+
+    qab = a + b
+    qap = a + 1.0
+    qam = a - 1.0
+
+    c = 1.0
+    d = 1.0 - (qab * x / qap)
+    if abs(d) < tiny:
+        d = tiny
+    d = 1.0 / d
+    h = d
+
+    for m in range(1, max_iterations + 1):
+        m2 = 2 * m
+
+        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        h *= d * c
+
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1.0 + aa * d
+        if abs(d) < tiny:
+            d = tiny
+        c = 1.0 + aa / c
+        if abs(c) < tiny:
+            c = tiny
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+
+        if abs(delta - 1.0) < epsilon:
+            break
+
+    return h
 
 
 def _quantum_summary_table(comparison: QuantumScenarioComparison) -> pl.DataFrame:

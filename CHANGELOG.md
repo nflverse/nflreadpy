@@ -1,4 +1,5 @@
-# nflreadpy (devel version)
+# nflreadpy v0.1.4
+Release date: 2025-10-19
 
 Changes:
 

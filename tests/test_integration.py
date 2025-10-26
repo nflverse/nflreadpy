@@ -1,9 +1,8 @@
 """Integration tests for all nflreadpy functions."""
 
+import nflreadpy as nfl
 import polars as pl
 import pytest
-
-import nflreadpy as nfl
 
 
 class TestImports:
@@ -27,6 +26,7 @@ class TestImports:
             "load_nextgen_stats",
             "load_officials",
             "load_participation",
+            "load_pfr_advstats",
             "load_combine",
             "load_depth_charts",
             "load_trades",
@@ -221,6 +221,24 @@ class TestSeasonalDataLoaders:
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
+    def test_load_pfr_advstats_week_pass(self):
+        """Test load_pfr_advstats with weekly passing stats."""
+        df = nfl.load_pfr_advstats(2023, stat_type="pass", summary_level="week")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_pfr_advstats_season_pass(self):
+        """Test load_pfr_advstats with season-level passing stats."""
+        df = nfl.load_pfr_advstats(stat_type="pass", summary_level="season")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
+    def test_load_pfr_advstats_week_def(self):
+        """Test load_pfr_advstats with weekly defensive stats."""
+        df = nfl.load_pfr_advstats(2023, stat_type="def", summary_level="week")
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) >= 0
+
     def test_load_ff_opportunity_2024_season_week(self):
         """Test load_ff_opportunity week with specific season."""
         df = nfl.load_ff_opportunity(2024, stat_type="weekly")
@@ -275,6 +293,21 @@ class TestErrorHandling:
         """Test load_ff_opportunity with invalid model_version."""
         with pytest.raises(ValueError):
             nfl.load_ff_opportunity(2023, model_version="invalid")
+
+    def test_load_pfr_advstats_invalid_season(self):
+        """Test load_pfr_advstats with invalid season."""
+        with pytest.raises(ValueError):
+            nfl.load_pfr_advstats(2017)  # Too early
+
+    def test_load_pfr_advstats_invalid_stat_type(self):
+        """Test load_pfr_advstats with invalid stat_type."""
+        with pytest.raises(ValueError):
+            nfl.load_pfr_advstats(2023, stat_type="invalid")
+
+    def test_load_pfr_advstats_invalid_summary_level(self):
+        """Test load_pfr_advstats with invalid summary_level."""
+        with pytest.raises(ValueError):
+            nfl.load_pfr_advstats(2023, summary_level="invalid")
 
 
 class TestDataQuality:

@@ -21,6 +21,7 @@ from .load_nextgen_stats import load_nextgen_stats
 from .load_officials import load_officials
 from .load_participation import load_participation
 from .load_pbp import load_pbp
+from .load_pfr_advstats import load_pfr_advstats
 from .load_players import load_players
 from .load_rosters import load_rosters
 from .load_rosters_weekly import load_rosters_weekly
@@ -47,6 +48,7 @@ __all__ = [
     "load_nextgen_stats",
     "load_officials",
     "load_participation",
+    "load_pfr_advstats",
     "load_combine",
     "load_depth_charts",
     "load_trades",

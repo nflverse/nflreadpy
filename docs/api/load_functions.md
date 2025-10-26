@@ -19,6 +19,7 @@
 ::: nflreadpy.load_combine
 ::: nflreadpy.load_depth_charts
 ::: nflreadpy.load_trades
+::: nflreadpy.load_pfr_advstats
 ::: nflreadpy.load_ff_playerids
 ::: nflreadpy.load_ff_rankings
 ::: nflreadpy.load_ff_opportunity

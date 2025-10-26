@@ -97,7 +97,10 @@ def load_pfr_advstats(
         Data is available from 2018 onwards.
 
     See Also:
-        <https://nflreadr.nflverse.com/reference/load_pfr_advstats.html>
+       - [nflreadr docs](https://nflreadr.nflverse.com/reference/load_pfr_advstats.html)
+       - [example of advanced passing season-level stats](https://www.pro-football-reference.com/years/2025/passing_advanced.htm)
+       - [example of advanced passing week-level stats](https://www.pro-football-reference.com/boxscores/202509040phi.htm#all_passing_advanced)
+
     """
     # Validate stat_type
     if stat_type not in ["pass", "rush", "rec", "def"]:

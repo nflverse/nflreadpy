@@ -43,6 +43,7 @@ def _load_pfr_advstats_week(
 
 
 def _load_pfr_advstats_season(
+    seasons: list[int],
     stat_type: Literal["pass", "rush", "rec", "def"],
 ) -> pl.DataFrame:
     """
@@ -56,12 +57,15 @@ def _load_pfr_advstats_season(
     """
     downloader = get_downloader()
     path = f"pfr_advstats/advstats_season_{stat_type}"
-    return downloader.download(
-        "nflverse-data",
-        path,
+    df = downloader.download(
+        repository="nflverse-data",
+        path=path,
         stat_type=stat_type,
         summary_level="season",
     )
+    # Filter the dataframe by season
+    df = df.filter(pl.col("season").is_in(seasons))
+    return df
 
 
 def load_pfr_advstats(
@@ -103,11 +107,7 @@ def load_pfr_advstats(
     if summary_level not in ["week", "season"]:
         raise ValueError("summary_level must be 'week' or 'season'")
 
-    # For season-level data, ignore seasons parameter
-    if summary_level == "season":
-        return _load_pfr_advstats_season(stat_type)
-
-    # Handle seasons parameter for week-level data
+    # Handle seasons parameter
     if seasons is None:
         seasons = [get_current_season()]
     elif seasons is True:
@@ -122,5 +122,9 @@ def load_pfr_advstats(
     for season in seasons:
         if not isinstance(season, int) or season < 2018 or season > current_season:
             raise ValueError(f"Season must be between 2018 and {current_season}")
+
+    # For season-level data, ignore seasons parameter
+    if summary_level == "season":
+        return _load_pfr_advstats_season(seasons, stat_type)
 
     return _load_pfr_advstats_week(seasons, stat_type)

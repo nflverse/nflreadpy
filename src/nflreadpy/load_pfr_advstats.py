@@ -8,66 +8,6 @@ from .downloader import get_downloader
 from .utils_date import get_current_season
 
 
-def _load_pfr_advstats_week(
-    seasons: list[int],
-    stat_type: Literal["pass", "rush", "rec", "def"],
-) -> pl.DataFrame:
-    """
-    Load weekly Pro Football Reference advanced statistics.
-
-    Args:
-        seasons: List of seasons to load.
-        stat_type: Type of statistics to load.
-
-    Returns:
-        Polars DataFrame with weekly advanced statistics.
-    """
-    downloader = get_downloader()
-    dataframes = []
-
-    for season in seasons:
-        path = f"pfr_advstats/advstats_week_{stat_type}_{season}"
-        df = downloader.download(
-            "nflverse-data",
-            path,
-            season=season,
-            stat_type=stat_type,
-            summary_level="week",
-        )
-        dataframes.append(df)
-
-    if len(dataframes) == 1:
-        return dataframes[0]
-    else:
-        return pl.concat(dataframes, how="diagonal_relaxed")
-
-
-def _load_pfr_advstats_season(
-    seasons: list[int],
-    stat_type: Literal["pass", "rush", "rec", "def"],
-) -> pl.DataFrame:
-    """
-    Load season-level Pro Football Reference advanced statistics.
-
-    Args:
-        stat_type: Type of statistics to load.
-
-    Returns:
-        Polars DataFrame with season-level advanced statistics.
-    """
-    downloader = get_downloader()
-    path = f"pfr_advstats/advstats_season_{stat_type}"
-    df = downloader.download(
-        repository="nflverse-data",
-        path=path,
-        stat_type=stat_type,
-        summary_level="season",
-    )
-    # Filter the dataframe by season
-    df = df.filter(pl.col("season").is_in(seasons))
-    return df
-
-
 def load_pfr_advstats(
     seasons: int | list[int] | bool | None = None,
     stat_type: Literal["pass", "rush", "rec", "def"] = "pass",
@@ -131,3 +71,63 @@ def load_pfr_advstats(
         return _load_pfr_advstats_season(seasons, stat_type)
 
     return _load_pfr_advstats_week(seasons, stat_type)
+
+
+def _load_pfr_advstats_week(
+    seasons: list[int],
+    stat_type: Literal["pass", "rush", "rec", "def"],
+) -> pl.DataFrame:
+    """
+    Load weekly Pro Football Reference advanced statistics.
+
+    Args:
+        seasons: List of seasons to load.
+        stat_type: Type of statistics to load.
+
+    Returns:
+        Polars DataFrame with weekly advanced statistics.
+    """
+    downloader = get_downloader()
+    dataframes = []
+
+    for season in seasons:
+        path = f"pfr_advstats/advstats_week_{stat_type}_{season}"
+        df = downloader.download(
+            "nflverse-data",
+            path,
+            season=season,
+            stat_type=stat_type,
+            summary_level="week",
+        )
+        dataframes.append(df)
+
+    if len(dataframes) == 1:
+        return dataframes[0]
+    else:
+        return pl.concat(dataframes, how="diagonal_relaxed")
+
+
+def _load_pfr_advstats_season(
+    seasons: list[int],
+    stat_type: Literal["pass", "rush", "rec", "def"],
+) -> pl.DataFrame:
+    """
+    Load season-level Pro Football Reference advanced statistics.
+
+    Args:
+        stat_type: Type of statistics to load.
+
+    Returns:
+        Polars DataFrame with season-level advanced statistics.
+    """
+    downloader = get_downloader()
+    path = f"pfr_advstats/advstats_season_{stat_type}"
+    df = downloader.download(
+        repository="nflverse-data",
+        path=path,
+        stat_type=stat_type,
+        summary_level="season",
+    )
+    # Filter the dataframe by season
+    df = df.filter(pl.col("season").is_in(seasons))
+    return df

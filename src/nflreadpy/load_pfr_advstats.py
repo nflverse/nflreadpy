@@ -66,11 +66,10 @@ def load_pfr_advstats(
         if not isinstance(season, int) or season < 2018 or season > current_season:
             raise ValueError(f"Season must be between 2018 and {current_season}")
 
-    # For season-level data, ignore seasons parameter
     if summary_level == "season":
         return _load_pfr_advstats_season(seasons, stat_type)
-
-    return _load_pfr_advstats_week(seasons, stat_type)
+    else:
+        return _load_pfr_advstats_week(seasons, stat_type)
 
 
 def _load_pfr_advstats_week(

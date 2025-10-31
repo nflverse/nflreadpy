@@ -229,7 +229,7 @@ class TestSeasonalDataLoaders:
 
     def test_load_pfr_advstats_season_pass(self):
         """Test load_pfr_advstats with season-level passing stats."""
-        df = nfl.load_pfr_advstats(stat_type="pass", summary_level="season")
+        df = nfl.load_pfr_advstats(2023, stat_type="pass", summary_level="season")
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
 
@@ -297,7 +297,7 @@ class TestErrorHandling:
     def test_load_pfr_advstats_invalid_season(self):
         """Test load_pfr_advstats with invalid season."""
         with pytest.raises(ValueError):
-            nfl.load_pfr_advstats(2017)  # Too early
+            nfl.load_pfr_advstats(2017, summary_level="season")
 
     def test_load_pfr_advstats_invalid_stat_type(self):
         """Test load_pfr_advstats with invalid stat_type."""

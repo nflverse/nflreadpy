@@ -4,9 +4,6 @@ from datetime import date
 
 import polars as pl
 
-from .load_schedules import load_schedules
-
-
 def get_current_season(roster: bool = False) -> int:
     """
     Get the current NFL season year.
@@ -45,6 +42,9 @@ def get_current_season(roster: bool = False) -> int:
         season_start = date(labor_day.year, labor_day.month, labor_day.day + 3)
         return current_year if today >= season_start else current_year - 1
 
+# This import MUST stay below get_current_season because load_schedules imports get_current_season
+# and we run in circular dependency issues otherwise
+from .load_schedules import load_schedules
 
 def get_current_week(use_date: bool = False, **kwargs) -> int:
     """

@@ -42,9 +42,13 @@ def get_current_season(roster: bool = False) -> int:
         return current_year if today >= season_start else current_year - 1
 
 
-def get_current_week() -> int:
+def get_current_week(**kwargs) -> int:
     """
     Get the current NFL week (rough approximation).
+
+    Args:
+        **kwargs:
+            Arguments passed on to `get_current_season()`
 
     Returns:
         The current NFL week (1-22).
@@ -53,7 +57,7 @@ def get_current_week() -> int:
         <https://nflreadr.nflverse.com/reference/get_current_week.html>
     """
     today = date.today()
-    season_year = get_current_season()
+    season_year = get_current_season(**kwargs)
 
     # NFL season typically starts around first Thursday of September
     # Find first Thursday in September

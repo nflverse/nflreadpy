@@ -18,6 +18,9 @@ def get_current_season(roster: bool = False) -> int:
     See Also:
         <https://nflreadr.nflverse.com/reference/get_current_season.html>
     """
+    if not isinstance(roster, bool):
+        raise TypeError("argument `roster` must be boolean")
+
     today = date.today()
     current_year = today.year
 

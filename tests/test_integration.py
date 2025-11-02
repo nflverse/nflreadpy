@@ -58,10 +58,10 @@ class TestUtilityFunctions:
 
     def test_get_current_week(self):
         """Test get_current_week function."""
-        week = nfl.get_current_week(use_date = True)
+        week = nfl.get_current_week(use_date=True)
         assert isinstance(week, int)
         assert 1 <= week <= 22  # Reasonable bounds for NFL weeks
-        week = nfl.get_current_week(use_date = False, roster = True)
+        week = nfl.get_current_week(use_date=False, roster=True)
         assert isinstance(week, int)
         assert 1 <= week <= 22  # Reasonable bounds for NFL weeks
 

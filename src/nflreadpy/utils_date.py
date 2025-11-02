@@ -4,6 +4,7 @@ from datetime import date
 
 import polars as pl
 
+
 def get_current_season(roster: bool = False) -> int:
     """
     Get the current NFL season year.
@@ -42,9 +43,6 @@ def get_current_season(roster: bool = False) -> int:
         season_start = date(labor_day.year, labor_day.month, labor_day.day + 3)
         return current_year if today >= season_start else current_year - 1
 
-# This import MUST stay below get_current_season because load_schedules imports get_current_season
-# and we run in circular dependency issues otherwise
-from .load_schedules import load_schedules
 
 def get_current_week(use_date: bool = False, **kwargs) -> int:
     """
@@ -66,6 +64,8 @@ def get_current_week(use_date: bool = False, **kwargs) -> int:
     if not isinstance(use_date, bool):
         raise TypeError("argument `use_date` must be boolean")
 
+    from .load_schedules import load_schedules
+
     if use_date:
         today = date.today()
         season_year = get_current_season(**kwargs)
@@ -86,16 +86,21 @@ def get_current_week(use_date: bool = False, **kwargs) -> int:
 
         return int(week)
     else:
-        # Polars is incredible but come on the syntax is insane
-        sched = load_schedules(seasons = get_current_season(**kwargs))
-        # counts NA values in column result
-        if sched.select(pl.col("result")).null_count().item() == 0:
+        sched = load_schedules(seasons=get_current_season(**kwargs))
+        count_na_weeks = sched.select("result").null_count().item()
+        if count_na_weeks == 0:
             # no NA values in result, return max(week)
-            return sched.select(pl.col("week")).drop_nulls().max().item()
+            return sched.select("week").drop_nulls().max().item()
         else:
-            # there are NA values in result. Filter table to NA results only, 
+            # there are NA values in result. Filter table to NA results only,
             # and return min(week)
-            return sched.filter(pl.col("result").is_null()).select(pl.col("week")).drop_nulls().min().item()
+            return (
+                sched.filter(pl.col("result").is_null())
+                .select("week")
+                .drop_nulls()
+                .min()
+                .item()
+            )
 
 
 def most_recent_season(roster: bool = False) -> int:

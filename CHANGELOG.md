@@ -1,3 +1,9 @@
+# nflreadpy development version
+
+* Added argument `use_date` to get_current_week() to implement both, a date based approach and a schedules based approach to current week caluclations. (#39)
+
+---
+
 # nflreadpy v0.1.4
 Release date: 2025-10-19
 
@@ -6,7 +12,6 @@ Changes:
 * load_teams() now points to nflverse-data@teams for compat with nflreadr (breaking change)
 * load_schedules() now points to nflverse-data@schedules to access parquet version of file
 * load_trades() now points to nflverse-data@trades to access parquet version of file
-
 
 ---
 

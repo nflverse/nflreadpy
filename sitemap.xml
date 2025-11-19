@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://nflreadpy.nflverse.com/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/CHANGELOG/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/CONTRIBUTING/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/LICENSE/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/api/cache/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/api/configuration/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/api/load_functions/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+    <url>
+         <loc>https://nflreadpy.nflverse.com/api/utils/</loc>
+         <lastmod>2025-11-19</lastmod>
+    </url>
+</urlset>

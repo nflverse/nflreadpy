@@ -1,5 +1,7 @@
-# nflreadpy development version
+# nflreadpy v0.1.5
+Release date: 2025-11-19
 
+* Adds `load_pfr_advstats()`
 * Added argument `use_date` to get_current_week() to implement both, a date based approach and a schedules based approach to current week caluclations. (#39)
 
 ---

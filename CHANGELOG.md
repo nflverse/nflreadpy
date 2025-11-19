@@ -1,3 +1,8 @@
+# nflreadpy devel
+
+- update load_participation() season assertions to use improved week-level logic.
+
+---
 # nflreadpy v0.1.5
 Release date: 2025-11-19
 

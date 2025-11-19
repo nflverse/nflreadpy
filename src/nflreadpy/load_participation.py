@@ -3,7 +3,7 @@
 import polars as pl
 
 from .downloader import get_downloader
-from .utils_date import get_current_season
+from .utils_date import get_current_season, get_current_week
 
 
 def load_participation(seasons: int | list[int] | bool | None = None) -> pl.DataFrame:
@@ -27,8 +27,14 @@ def load_participation(seasons: int | list[int] | bool | None = None) -> pl.Data
     Data Dictionary:
         <https://nflreadr.nflverse.com/articles/dictionary_participation.html>
     """
-    # participation only available on a historical basis from FTN
-    max_season = get_current_season(roster=True) - 1
+    # we expect to have participation data available after the final week of the
+    # season from FTN
+    current_week = get_current_week(use_date=False)
+    if current_week == 22:
+        max_season = get_current_season()
+    else:
+        max_season = get_current_season() - 1
+
     if seasons is None:
         seasons = [max_season]
     elif seasons is True:

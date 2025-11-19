@@ -23,12 +23,24 @@ modern Python conventions.
 
 ## Install
 
+Install the latest release from PyPI with:
+
 ```bash
 # Using uv (recommended)
 uv add nflreadpy
 
 # Using pip
 pip install nflreadpy
+```
+
+You can also install the latest development version from GitHub with:
+
+```bash
+# Using uv (recommended)
+uv add nflreadpy@git+https://github.com/nflverse/nflreadpy
+
+# Using pip
+pip install nflreadpy@git+https://github.com/nflverse/nflreadpy
 ```
 
 ## Usage

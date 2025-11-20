@@ -62,4 +62,7 @@ __all__ = [
     "get_current_season",
     "get_current_week",
     "clear_cache",
+    # datasets
+    "team_abbr_mapping",
+    "team_abbr_mapping_norelocate",
 ]

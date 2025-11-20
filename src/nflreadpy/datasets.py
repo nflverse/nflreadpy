@@ -53,3 +53,19 @@ def team_abbr_mapping_norelocate() -> pl.DataFrame:
 
     """
     return pl.read_parquet(data_path("team_abbr_mapping_norelocate"))
+
+
+def player_name_mapping() -> pl.DataFrame:
+    """Alternate team abbreviation mappings
+
+    A lookup table mapping common alternate team abbreviations.
+
+    Returns:
+        Polars DataFrame with two columns `name` and `value` where `value` reflects
+        the standardized nflverse team abbreviation.
+
+    See Also:
+        <https://nflreadr.nflverse.com/reference/team_abbr_mapping.html>
+
+    """
+    return pl.read_parquet(data_path("player_name_mapping"))

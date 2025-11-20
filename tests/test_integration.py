@@ -142,6 +142,13 @@ class TestStaticDataLoaders:
         # Map to 32 teams + AFC, NFC, NFL + SD, STL, OAK
         assert df2.select("value").n_unique() == 38
 
+    def test_player_name_mapping(self):
+        """Test player_name_mapping."""
+        df = nfl.player_name_mapping()
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) > 0
+        assert len(df) >= 136
+
 
 class TestSeasonalDataLoaders:
     """Test loaders that require season parameters."""

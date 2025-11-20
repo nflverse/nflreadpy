@@ -10,7 +10,7 @@ from importlib.metadata import version
 __version__ = version("nflreadpy")
 
 from .cache import clear_cache
-from .datasets import team_abbr_mapping, team_abbr_mapping_norelocate
+from .datasets import team_abbr_mapping, team_abbr_mapping_norelocate, player_name_mapping
 from .load_combine import load_combine
 from .load_contracts import load_contracts
 from .load_depth_charts import load_depth_charts
@@ -66,4 +66,5 @@ __all__ = [
     # datasets
     "team_abbr_mapping",
     "team_abbr_mapping_norelocate",
+    "player_name_mapping"
 ]

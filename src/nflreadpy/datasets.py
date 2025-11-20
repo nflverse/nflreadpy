@@ -6,7 +6,7 @@ from importlib import resources
 import polars as pl
 
 
-def data_path(dataset = None) -> str:
+def data_path(dataset=None) -> str:
     """Get Path to nflreadpy Data Files.
 
     Returns:

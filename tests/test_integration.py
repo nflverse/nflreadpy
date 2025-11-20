@@ -129,8 +129,8 @@ class TestStaticDataLoaders:
 
     def test_team_abbr_mappings(self):
         """Test team_abbr_mappings."""
-        df1 = nfl.datasets.team_abbr_mapping()
-        df2 = nfl.datasets.team_abbr_mapping_norelocate()
+        df1 = nfl.team_abbr_mapping()
+        df2 = nfl.team_abbr_mapping_norelocate()
         assert isinstance(df1, pl.DataFrame)
         assert isinstance(df2, pl.DataFrame)
         assert len(df1) > 0

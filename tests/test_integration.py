@@ -40,6 +40,9 @@ class TestImports:
             "get_current_season",
             "get_current_week",
             "clear_cache",
+            # datasets
+            "team_abbr_mapping",
+            "team_abbr_mapping_norelocate",
         ]
 
         for export in expected_exports:
@@ -123,6 +126,28 @@ class TestStaticDataLoaders:
         df = nfl.load_ff_rankings("all")
         assert isinstance(df, pl.DataFrame)
         assert len(df) >= 0
+
+    def test_team_abbr_mappings(self):
+        """Test team_abbr_mappings."""
+        df1 = nfl.team_abbr_mapping()
+        df2 = nfl.team_abbr_mapping_norelocate()
+        assert isinstance(df1, pl.DataFrame)
+        assert isinstance(df2, pl.DataFrame)
+        assert len(df1) > 0
+        assert len(df2) > 0
+        assert len(df1) >= 143
+        assert len(df2) >= 149
+        # Map to 32 teams + AFC, NFC, NFL
+        assert df1.select("value").n_unique() == 35
+        # Map to 32 teams + AFC, NFC, NFL + SD, STL, OAK
+        assert df2.select("value").n_unique() == 38
+
+    def test_player_name_mapping(self):
+        """Test player_name_mapping."""
+        df = nfl.player_name_mapping()
+        assert isinstance(df, pl.DataFrame)
+        assert len(df) > 0
+        assert len(df) >= 136
 
 
 class TestSeasonalDataLoaders:

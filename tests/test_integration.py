@@ -1,8 +1,9 @@
 """Integration tests for all nflreadpy functions."""
 
-import nflreadpy as nfl
 import polars as pl
 import pytest
+
+import nflreadpy as nfl
 
 
 class TestImports:
@@ -40,6 +41,7 @@ class TestImports:
             "get_current_season",
             "get_current_week",
             "clear_cache",
+            "clean_team_abbrs",
             # datasets
             "team_abbr_mapping",
             "team_abbr_mapping_norelocate",
@@ -72,6 +74,73 @@ class TestUtilityFunctions:
         """Test clear_cache function."""
         # Should not raise an exception
         nfl.clear_cache()
+
+    def clean_team_abbrs(self):
+        """Test clean_team_abbrs function."""
+        x = [
+            "PIE",
+            "LAR",
+            "PIT",
+            "CRD",
+            "OAK",
+            "CLV",
+            "PHO",
+            "Niners",
+            "49ers",
+            "San Diego Chargers",
+            "Oakland Raiders",
+            "St Louis Rams",
+        ]
+
+        new_abbr = nfl.clean_team_abbrs(x)
+        new_abbr_drop = nfl.clean_team_abbrs(x, keep_non_matches=False)
+        old_abbr = nfl.clean_team_abbrs(x, current_location=False)
+
+        exp_new_abbr = [
+            "PIE",
+            "LA",
+            "PIT",
+            "ARI",
+            "LV",
+            "CLE",
+            "ARI",
+            "SF",
+            "SF",
+            "LAC",
+            "LV",
+            "LA",
+        ]
+        exp_new_abbr_drop = [
+            None,
+            "LA",
+            "PIT",
+            "ARI",
+            "LV",
+            "CLE",
+            "ARI",
+            "SF",
+            "SF",
+            "LAC",
+            "LV",
+            "LA",
+        ]
+        exp_old_abbr = [
+            "PIE",
+            "LA",
+            "PIT",
+            "ARI",
+            "OAK",
+            "CLE",
+            "ARI",
+            "SF",
+            "SF",
+            "SD",
+            "OAK",
+            "STL",
+        ]
+        assert new_abbr == exp_new_abbr
+        assert new_abbr_drop == exp_new_abbr_drop
+        assert old_abbr == exp_old_abbr
 
 
 class TestStaticDataLoaders:

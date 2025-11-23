@@ -2,6 +2,7 @@
 
 * update `load_participation()` season assertions to use improved week-level logic.
 * Added `team_abbr_mapping()`, `team_abbr_mapping_norelocate()`, and `player_name_mapping()`
+* Added `clean_team_abbrs()`
 
 ---
 # nflreadpy v0.1.5

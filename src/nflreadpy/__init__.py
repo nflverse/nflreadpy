@@ -11,9 +11,9 @@ __version__ = version("nflreadpy")
 
 from .cache import clear_cache
 from .datasets import (
+    player_name_mapping,
     team_abbr_mapping,
     team_abbr_mapping_norelocate,
-    player_name_mapping,
 )
 from .load_combine import load_combine
 from .load_contracts import load_contracts
@@ -36,6 +36,7 @@ from .load_stats import load_player_stats, load_team_stats
 from .load_teams import load_teams
 from .load_trades import load_trades
 from .utils_date import get_current_season, get_current_week
+from .utils_name_cleaning import clean_team_abbrs
 
 __all__ = [
     # Core loading functions
@@ -67,6 +68,7 @@ __all__ = [
     "get_current_season",
     "get_current_week",
     "clear_cache",
+    "clean_team_abbrs",
     # datasets
     "team_abbr_mapping",
     "team_abbr_mapping_norelocate",

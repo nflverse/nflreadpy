@@ -92,6 +92,7 @@ pbp_pandas = pbp.to_pandas()
 - `clear_cache()` - Clear cached data
 - `get_current_season()` - Get current NFL season
 - `get_current_week()` - Get current NFL week
+- `clean_team_abbrs()` - Standardize NFL team abbreviations
 
 ## Configuration
 

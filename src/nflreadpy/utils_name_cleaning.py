@@ -21,9 +21,9 @@ def clean_team_abbrs(
             Otherwise it will be replaced with `None`.
 
     Returns:
-        A string list with the length of `abbr` and cleaned team abbreviations
-        if they are included in `team_abbr_mapping()` or `team_abbr_mapping_norelocate()`
-        (depending on the value of `current_location`). Non matches may be replaced
+        A string list with the length of `abbr` and cleaned team abbreviations\
+        if they are included in `team_abbr_mapping()` or `team_abbr_mapping_norelocate()`\
+        (depending on the value of `current_location`). Non matches may be replaced\
         with `Nome` (depending on the value of `keep_non_matches`).
     """
     # if abbr is a single string, we split it to get a list

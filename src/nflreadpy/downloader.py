@@ -84,7 +84,20 @@ class NflverseDownloader:
 
             # Parse data based on URL extension
             if url.endswith(".parquet"):
-                data = pl.read_parquet(content)
+                try:
+                    data = pl.read_parquet(content)
+                except Exception as parquet_err:
+                    # Polars native reader is strict about UTF-8. If pyarrow is
+                    # available (standard in Colab/conda envs), use it as a
+                    # fallback since it handles non-conforming strings leniently.
+                    try:
+                        import io
+
+                        import pyarrow.parquet as pq
+
+                        data = pl.from_arrow(pq.read_table(io.BytesIO(content)))
+                    except ImportError:
+                        raise parquet_err
             elif url.endswith(".csv"):
                 data = pl.read_csv(content, null_values=["NA", "NULL", ""])
 

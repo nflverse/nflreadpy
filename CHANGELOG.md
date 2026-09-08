@@ -2,6 +2,7 @@
 
 * update `load_participation()` season assertions to use improved week-level logic.
 * Added `team_abbr_mapping()`, `team_abbr_mapping_norelocate()`, and `player_name_mapping()`
+* Adjust season start date calculation to be the Wednesday after Labor Day instead of Thursday.
 
 ---
 # nflreadpy v0.1.5

@@ -1,8 +1,37 @@
 """Date utility functions for nflreadpy."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import polars as pl
+
+
+def _season_start(season_year: int) -> date:
+    """
+    Get the date a given NFL season begins: the Wednesday following Labor Day.
+
+    Labor Day is the first Monday in September, so this lands two days later.
+
+    This is the season *boundary*, which is not always the date of the first
+    game. The 2026 season opens on this Wednesday, but 2015-2025 all opened on
+    the Thursday one day later. The boundary sits on the Wednesday because that
+    is a no-game day in either case: weeks run Wednesday-to-Tuesday and games
+    fall on Thursday through Monday, so week numbering comes out correct for
+    Wednesday- and Thursday-opening seasons alike.
+
+    Args:
+        season_year: The season year to compute the start date for.
+
+    Returns:
+        The date the season begins.
+    """
+    # Labor Day is the first Monday in September
+    for day in range(1, 8):
+        labor_day = date(season_year, 9, day)
+        if labor_day.weekday() == 0:  # Monday
+            break
+
+    # Wednesday following Labor Day
+    return labor_day + timedelta(days=2)
 
 
 def get_current_season(roster: bool = False) -> int:
@@ -12,7 +41,7 @@ def get_current_season(roster: bool = False) -> int:
     Args:
         roster:
             - If True, uses roster year logic (current year after March 15).
-            - If False, uses season logic (current year after Thursday following Labor Day).
+            - If False, uses season logic (current year after Wednesday following Labor Day).
 
     Returns:
         The current season/roster year.
@@ -31,16 +60,8 @@ def get_current_season(roster: bool = False) -> int:
         march_15 = date(current_year, 3, 15)
         return current_year if today >= march_15 else current_year - 1
     else:
-        # Season logic: current year after Thursday following Labor Day
-        # Labor Day is first Monday in September
-        # Find first Monday in September
-        for day in range(1, 8):
-            if date(current_year, 9, day).weekday() == 0:  # Monday
-                labor_day = date(current_year, 9, day)
-                break
-
-        # Thursday following Labor Day
-        season_start = date(labor_day.year, labor_day.month, labor_day.day + 3)
+        # Season logic: current year after Wednesday following Labor Day
+        season_start = _season_start(current_year)
         return current_year if today >= season_start else current_year - 1
 
 
@@ -50,7 +71,7 @@ def get_current_week(use_date: bool = False, **kwargs) -> int:
 
     Args:
         use_date:
-            - If `True`, calculates week as the number of weeks since Thursday following Labor Day.
+            - If `True`, calculates week as the number of weeks since Wednesday following Labor Day.
             - If `False`, loads schedules via `load_schedules(seasons = get_current_season(**kwargs))` and returns week of the next game.
         **kwargs:
             Arguments passed on to `get_current_season()`
@@ -70,12 +91,8 @@ def get_current_week(use_date: bool = False, **kwargs) -> int:
         today = date.today()
         season_year = get_current_season(**kwargs)
 
-        # NFL season typically starts around first Thursday of September
-        # Find first Thursday in September
-        for day in range(1, 8):
-            if date(season_year, 9, day).weekday() == 3:  # Thursday
-                season_start = date(season_year, 9, day)
-                break
+        # The NFL season starts on the Wednesday following Labor Day
+        season_start = _season_start(season_year)
 
         if today < season_start:
             return 1

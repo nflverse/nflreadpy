@@ -1,5 +1,6 @@
 # nflreadpy devel
 
+* `load_teams()` now defaults to standardized current team abbreviations, matching nflreadr. Use `current=False` to retain historical and alternate abbreviations (#48).
 * update `load_participation()` season assertions to use improved week-level logic.
 * Added `team_abbr_mapping()`, `team_abbr_mapping_norelocate()`, and `player_name_mapping()`
 

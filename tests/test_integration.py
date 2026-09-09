@@ -1,8 +1,10 @@
 """Integration tests for all nflreadpy functions."""
 
-import nflreadpy as nfl
 import polars as pl
 import pytest
+
+import nflreadpy as nfl
+from nflreadpy.downloader import get_downloader
 
 
 class TestImports:
@@ -77,12 +79,28 @@ class TestUtilityFunctions:
 class TestStaticDataLoaders:
     """Test loaders that don't require season parameters."""
 
+    @pytest.mark.parametrize("current", [None, True, False])
+    def test_load_teams_current(self, monkeypatch, current):
+        """Filter aliases by default without changing the downloaded data."""
+        teams = pl.DataFrame(
+            {"team_abbr": ["LA", "STL", "LAR", "LV", "OAK"], "color": range(5)}
+        )
+        monkeypatch.setattr(get_downloader(), "download", lambda *args: teams)
+
+        result = (
+            nfl.load_teams() if current is None else nfl.load_teams(current=current)
+        )
+        expected = teams if current is False else teams[[0, 3]]
+        assert result.equals(expected)
+        # A filtered call must not discard historical rows for subsequent callers.
+        assert nfl.load_teams(current=False).equals(teams)
+
     def test_load_teams(self):
         """Test load_teams function."""
         df = nfl.load_teams()
         assert isinstance(df, pl.DataFrame)
         assert len(df) > 0
-        # Should have 32+ teams (accounting for relocations)
+        # Includes current teams and any league/conference entries.
         assert len(df) >= 32
 
     def test_load_players(self):

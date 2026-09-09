@@ -12,7 +12,7 @@ def get_current_season(roster: bool = False) -> int:
     Args:
         roster:
             - If True, uses roster year logic (current year after March 15).
-            - If False, uses season logic (current year after Thursday following Labor Day).
+            - If False, uses season logic (current year after Wednesday following Labor Day).
 
     Returns:
         The current season/roster year.

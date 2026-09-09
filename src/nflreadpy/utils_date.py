@@ -12,7 +12,7 @@ def get_current_season(roster: bool = False) -> int:
     Args:
         roster:
             - If True, uses roster year logic (current year after March 15).
-            - If False, uses season logic (current year after Thursday following Labor Day).
+            - If False, uses season logic (current year after Wednesday following Labor Day).
 
     Returns:
         The current season/roster year.
@@ -39,8 +39,8 @@ def get_current_season(roster: bool = False) -> int:
                 labor_day = date(current_year, 9, day)
                 break
 
-        # Thursday following Labor Day
-        season_start = date(labor_day.year, labor_day.month, labor_day.day + 3)
+        # Wednesday following Labor Day because NFL is dumb - Tan 2026
+        season_start = date(labor_day.year, labor_day.month, labor_day.day + 2)
         return current_year if today >= season_start else current_year - 1
 
 

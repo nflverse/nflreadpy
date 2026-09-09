@@ -37,7 +37,7 @@ def load_injuries(seasons: int | list[int] | bool | None = None) -> pl.DataFrame
         seasons = [seasons]
 
     # Validate seasons
-    current_season = get_current_season()
+    current_season = get_current_season(roster = True)
     for season in seasons:
         if not isinstance(season, int) or season < 2009 or season > current_season:
             raise ValueError(f"Season must be between 2009 and {current_season}")

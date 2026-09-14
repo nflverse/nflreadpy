@@ -10,10 +10,11 @@ from importlib.metadata import version
 __version__ = version("nflreadpy")
 
 from .cache import clear_cache
+from .clean_homeaway import clean_homeaway
 from .datasets import (
+    player_name_mapping,
     team_abbr_mapping,
     team_abbr_mapping_norelocate,
-    player_name_mapping,
 )
 from .load_combine import load_combine
 from .load_contracts import load_contracts
@@ -64,6 +65,7 @@ __all__ = [
     "load_ff_rankings",
     "load_ff_opportunity",
     # Utility functions
+    "clean_homeaway",
     "get_current_season",
     "get_current_week",
     "clear_cache",

@@ -1,8 +1,9 @@
 """Integration tests for all nflreadpy functions."""
 
-import nflreadpy as nfl
 import polars as pl
 import pytest
+
+import nflreadpy as nfl
 
 
 class TestImports:
@@ -37,6 +38,7 @@ class TestImports:
             "load_ff_rankings",
             "load_ff_opportunity",
             # Utility functions
+            "clean_homeaway",
             "get_current_season",
             "get_current_week",
             "clear_cache",

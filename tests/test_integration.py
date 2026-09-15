@@ -39,6 +39,7 @@ class TestImports:
             # Utility functions
             "get_current_season",
             "get_current_week",
+            "nflverse_game_id",
             "clear_cache",
             # datasets
             "team_abbr_mapping",
@@ -72,6 +73,51 @@ class TestUtilityFunctions:
         """Test clear_cache function."""
         # Should not raise an exception
         nfl.clear_cache()
+
+
+class TestNflverseGameId:
+    """Test nflverse_game_id function."""
+
+    def test_scalar_input(self):
+        """Scalar arguments return a single game ID string."""
+        assert nfl.nflverse_game_id(2022, 2, "LAC", "KC") == "2022_02_LAC_KC"
+
+    def test_vector_input(self):
+        """List arguments return a list of game ID strings."""
+        assert nfl.nflverse_game_id(
+            [2022, 2022], [2, 13], ["LAC", "LAC"], ["KC", "LV"]
+        ) == ["2022_02_LAC_KC", "2022_13_LAC_LV"]
+
+    def test_allows_old_names_and_cleans_abbrs(self):
+        """Old team names (SD) are kept as-is; alt abbrs (LAR) are standardized."""
+        assert nfl.nflverse_game_id(
+            [2022, 2022], [2, 13], ["SD", "LAC"], ["KC", "LAR"]
+        ) == ["2022_02_SD_KC", "2022_13_LAC_LA"]
+
+    def test_season_out_of_range_raises(self):
+        """Season below 1999 raises ValueError."""
+        with pytest.raises(ValueError, match="must be between 1999"):
+            nfl.nflverse_game_id(1998, 2, "LAC", "KC")
+
+    def test_week_out_of_range_raises(self):
+        """Week above 22 raises ValueError."""
+        with pytest.raises(ValueError, match="must be between 1 and"):
+            nfl.nflverse_game_id(2022, 30, "LAC", "KC")
+
+    def test_invalid_away_raises(self):
+        """Invalid away abbreviation raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid `away`"):
+            nfl.nflverse_game_id(2022, 2, ["LACC", "LACC"], "KC")
+
+    def test_invalid_home_raises(self):
+        """Invalid home abbreviation raises ValueError."""
+        with pytest.raises(ValueError, match="Invalid `home`"):
+            nfl.nflverse_game_id(2022, 2, "LAC", ["KKC", "KKC"])
+
+    def test_mismatched_length_warns(self):
+        """Argument lengths that aren't 1 or the max length emit a warning."""
+        with pytest.warns(UserWarning, match="Arguments should be of length one"):
+            nfl.nflverse_game_id(2022, 2, ["LAC", "LAC"], ["KC", "KC", "KC"])
 
 
 class TestStaticDataLoaders:

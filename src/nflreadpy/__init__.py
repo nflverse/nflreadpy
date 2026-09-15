@@ -36,6 +36,7 @@ from .load_stats import load_player_stats, load_team_stats
 from .load_teams import load_teams
 from .load_trades import load_trades
 from .utils_date import get_current_season, get_current_week
+from .utils_gameid import nflverse_game_id
 
 __all__ = [
     # Core loading functions
@@ -66,6 +67,7 @@ __all__ = [
     # Utility functions
     "get_current_season",
     "get_current_week",
+    "nflverse_game_id",
     "clear_cache",
     # datasets
     "team_abbr_mapping",

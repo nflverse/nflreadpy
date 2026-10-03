@@ -2,7 +2,7 @@
 
 import gc
 import io
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import polars as pl
 import pytest
@@ -18,20 +18,25 @@ NFLVERSE_METADATA = {
     "nflverse_type": NFLVERSE_TYPE,
     "nflverse_timestamp": NFLVERSE_TIMESTAMP,
 }
+SCHEDULE_METADATA = {
+    "nflverse_type": "games and schedules",
+    "nflverse_timestamp": "2026-10-03 00:36:18 EDT",
+}
 
 
-def make_parquet(metadata=None, season=2025):
+def make_parquet(metadata=None, season=2025, df=None):
     """Create a small parquet file in memory, optionally with key-value metadata."""
     if metadata is not None and not hasattr(pl, "read_parquet_metadata"):
         pytest.skip("Polars version has no parquet key-value metadata support")
 
-    df = pl.DataFrame(
-        {
-            "season": [season, season, season],
-            "play_id": [1, 2, 3],
-            "roof": ["dome", "outdoors", "unknown"],
-        }
-    )
+    if df is None:
+        df = pl.DataFrame(
+            {
+                "season": [season, season, season],
+                "play_id": [1, 2, 3],
+                "roof": ["dome", "outdoors", "unknown"],
+            }
+        )
     buffer = io.BytesIO()
     if metadata is None:
         df.write_parquet(buffer)
@@ -203,9 +208,31 @@ class TestDataUpdatedMessage:
 
     def test_format_timestamp_local_timezone(self):
         """Test that the local timezone is used by default."""
-        utc = datetime(2026, 8, 13, 12, 26, 2, tzinfo=timezone.utc)
-        expected = utc.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        assert nfl_metadata.format_timestamp(NFLVERSE_TIMESTAMP) == expected
+        local = datetime(2026, 8, 13, 12, 26, 2, tzinfo=timezone.utc).astimezone()
+        stamp = local.strftime("%Y-%m-%d %H:%M:%S")
+        # Long names (Windows) become a UTC offset
+        assert nfl_metadata.format_timestamp(NFLVERSE_TIMESTAMP) in {
+            f"{stamp} {local.tzname()}",
+            f"{stamp} UTC{local:%z}",
+        }
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            ("CEST", "2026-08-13 14:26:02 CEST"),
+            ("W. Europe Daylight Time", "2026-08-13 14:26:02 UTC+0200"),
+            ("Mitteleurop\u00e4ische Sommerzeit", "2026-08-13 14:26:02 UTC+0200"),
+        ],
+    )
+    def test_format_timestamp_long_timezone_name(self, name, expected):
+        """Test that long or non-ASCII timezone names become a UTC offset."""
+        tz = timezone(timedelta(hours=2), name)
+        assert nfl_metadata.format_timestamp(NFLVERSE_TIMESTAMP, tz=tz) == expected
+
+    def test_format_timestamp_out_of_range(self):
+        """Test that a timestamp that cannot be converted is returned unchanged."""
+        timestamp = "9999-12-31 23:59:59 EST"
+        assert nfl_metadata.format_timestamp(timestamp, tz=timezone.utc) == timestamp
 
     @pytest.mark.parametrize(
         "timestamp",
@@ -288,6 +315,19 @@ class TestDownloaderMetadata:
         assert len(df) == 2
         assert nfl.get_metadata(df) == {}
         assert capsys.readouterr().out == ""
+
+    def test_out_of_range_timestamp_does_not_fail_the_load(self, monkeypatch, capsys):
+        """Test that a timestamp that cannot be converted never fails a load."""
+        metadata = {
+            **NFLVERSE_METADATA,
+            "nflverse_timestamp": "9999-12-31 23:59:59 EST",
+        }
+        FakeSession(monkeypatch, make_parquet(metadata))
+        update_config(show_metadata=True)
+        df = get_downloader().download("nflverse-data", "pbp/play_by_play_2025")
+        assert len(df) == 3
+        assert nfl.get_metadata(df) == metadata
+        assert "Data updated: " in capsys.readouterr().out
 
     def test_data_updated_line_is_off_by_default(self, monkeypatch, capsys):
         """Test that nothing is printed with the default config."""
@@ -405,3 +445,50 @@ class TestLoaderMetadata:
         df = nfl.load_pbp([2024, 2025])
         assert len(df) == 6
         assert nfl.get_metadata(df) == {}
+
+
+class TestInternalDownloads:
+    """Test that internal downloads print no line."""
+
+    @staticmethod
+    def make_files():
+        """Schedule with week 1 played and week 2 open, and a participation file."""
+        season = nfl.get_current_season()
+        schedule = pl.DataFrame(
+            {"season": [season, season], "week": [1, 2], "result": [3, None]}
+        )
+        return {
+            "games.parquet": make_parquet(SCHEDULE_METADATA, df=schedule),
+            "pbp_participation_2024.parquet": make_parquet(season=2024),
+        }
+
+    def test_get_current_week_is_quiet(self, monkeypatch, capsys):
+        """Test that the schedule download in get_current_week() prints no line."""
+        FakeSession(monkeypatch, self.make_files())
+        update_config(show_metadata=True)
+        assert nfl.get_current_week() == 2
+        assert capsys.readouterr().out == ""
+
+        # Loading the schedule directly still prints the line
+        nfl.load_schedules()
+        output = capsys.readouterr().out
+        assert "nflverse games and schedules | Data updated: " in output
+
+    def test_get_current_week_is_quiet_in_verbose_mode(self, monkeypatch, capsys):
+        """Test that verbose mode prints the download but not the line."""
+        FakeSession(monkeypatch, self.make_files())
+        update_config(verbose=True)
+        assert nfl.get_current_week() == 2
+
+        output = capsys.readouterr().out
+        assert "Downloading" in output
+        assert "Data updated" not in output
+
+    def test_load_participation_has_no_schedule_line(self, monkeypatch, capsys):
+        """Test that load_participation() prints no line for the schedule file."""
+        FakeSession(monkeypatch, self.make_files())
+        update_config(show_metadata=True)
+        df = nfl.load_participation(2024)
+        assert len(df) == 3
+        assert nfl.get_metadata(df) == {}
+        assert capsys.readouterr().out == ""

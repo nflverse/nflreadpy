@@ -2,6 +2,9 @@
 
 import io
 import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
@@ -17,6 +20,9 @@ _UTC_OFFSET_HOURS = {"EST": -5, "EDT": -4}
 
 # Metadata per DataFrame, keyed by id() with a weak reference to the frame
 _registry: dict[int, tuple[weakref.ref[pl.DataFrame], dict[str, str]]] = {}
+
+# Set by quiet_metadata()
+_quiet: ContextVar[bool] = ContextVar("nflreadpy_quiet_metadata", default=False)
 
 
 def read_file_metadata(source: bytes | str | Path) -> dict[str, str]:
@@ -121,7 +127,7 @@ def format_timestamp(timestamp: str, tz: tzinfo | None = None) -> str:
 
     Returns:
         Formatted timestamp, e.g. "2026-08-13 14:26:02 CEST", or the input
-        unchanged if the format is unknown.
+        unchanged if it cannot be converted.
     """
     parts = timestamp.strip().rsplit(" ", 1)
     if len(parts) != 2 or parts[1] not in _UTC_OFFSET_HOURS:
@@ -133,8 +139,16 @@ def format_timestamp(timestamp: str, tz: tzinfo | None = None) -> str:
         return timestamp
 
     offset = timezone(timedelta(hours=_UTC_OFFSET_HOURS[parts[1]]))
-    converted = parsed.replace(tzinfo=offset).astimezone(tz)
-    return converted.strftime("%Y-%m-%d %H:%M:%S %Z")
+    try:
+        converted = parsed.replace(tzinfo=offset).astimezone(tz)
+        name = converted.tzname() or ""
+        if not name or not name.isascii() or " " in name:
+            # e.g. "W. Europe Daylight Time" on Windows
+            name = converted.strftime("UTC%z")
+        return f"{converted:%Y-%m-%d %H:%M:%S} {name}"
+    except (OverflowError, OSError, ValueError):
+        # Out of range
+        return timestamp
 
 
 def metadata_message(metadata: dict[str, str]) -> str | None:
@@ -153,6 +167,16 @@ def metadata_message(metadata: dict[str, str]) -> str | None:
     return f"{data_type} | {message}"
 
 
+@contextmanager
+def quiet_metadata() -> Iterator[None]:
+    """Suppress the "Data updated" line for internal downloads."""
+    token = _quiet.set(True)
+    try:
+        yield
+    finally:
+        _quiet.reset(token)
+
+
 def announce_metadata(df: pl.DataFrame) -> None:
     """Print the "Data updated" line if show_metadata is on.
 
@@ -160,7 +184,7 @@ def announce_metadata(df: pl.DataFrame) -> None:
     """
     config = get_config()
     show = config.verbose if config.show_metadata is None else config.show_metadata
-    if not show:
+    if not show or _quiet.get():
         return
 
     message = metadata_message(get_metadata(df))

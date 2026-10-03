@@ -1,8 +1,11 @@
 """Integration tests for all nflreadpy functions."""
 
+import re
+
 import nflreadpy as nfl
 import polars as pl
 import pytest
+from nflreadpy.config import update_config
 
 
 class TestImports:
@@ -39,6 +42,7 @@ class TestImports:
             # Utility functions
             "get_current_season",
             "get_current_week",
+            "get_metadata",
             "clear_cache",
             # datasets
             "team_abbr_mapping",
@@ -364,3 +368,29 @@ class TestDataQuality:
         assert len(df) > 0
         # Should have ~272 games per season (17 weeks * 16 games + playoffs)
         assert len(df) > 250
+
+
+class TestMetadata:
+    """Test the nflverse metadata stored in the parquet files."""
+
+    def test_load_pbp_2025_metadata(self):
+        """Test that the 2025 pbp file has the nflverse metadata."""
+        df = nfl.load_pbp(2025)
+        metadata = nfl.get_metadata(df)
+        assert metadata["nflverse_type"] == "play by play data"
+        # Stored in America/Toronto time, e.g. "2026-08-13 08:26:02 EDT"
+        assert re.fullmatch(
+            r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} E[SD]T",
+            metadata["nflverse_timestamp"],
+        )
+
+    def test_load_pbp_2025_data_updated_line(self, capsys):
+        """Test that the "Data updated" line is printed when turned on."""
+        update_config(show_metadata=True)
+        try:
+            nfl.load_pbp(2025)
+        finally:
+            update_config(show_metadata=None)
+
+        output = capsys.readouterr().out
+        assert "nflverse play by play data | Data updated: " in output

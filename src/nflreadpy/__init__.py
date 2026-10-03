@@ -35,6 +35,7 @@ from .load_snap_counts import load_snap_counts
 from .load_stats import load_player_stats, load_team_stats
 from .load_teams import load_teams
 from .load_trades import load_trades
+from .metadata import get_metadata
 from .utils_date import get_current_season, get_current_week
 
 __all__ = [
@@ -66,6 +67,7 @@ __all__ = [
     # Utility functions
     "get_current_season",
     "get_current_week",
+    "get_metadata",
     "clear_cache",
     # datasets
     "team_abbr_mapping",

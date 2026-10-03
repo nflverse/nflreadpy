@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from .cache import get_cache_manager
 from .config import DataFormat, get_config
+from .metadata import announce_metadata, attach_metadata, read_file_metadata
 
 
 class NflverseDownloader:
@@ -85,6 +86,7 @@ class NflverseDownloader:
             # Parse data based on URL extension
             if url.endswith(".parquet"):
                 data = pl.read_parquet(content)
+                attach_metadata(data, read_file_metadata(content))
             elif url.endswith(".csv"):
                 data = pl.read_csv(content, null_values=["NA", "NULL", ""])
 
@@ -118,7 +120,9 @@ class NflverseDownloader:
             Polars DataFrame with the requested data
         """
         url = self._build_url(repository, path, format)
-        return self._download_file(url, **kwargs)
+        data = self._download_file(url, **kwargs)
+        announce_metadata(data)
+        return data
 
 
 # Global downloader instance

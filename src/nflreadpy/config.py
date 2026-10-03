@@ -47,6 +47,7 @@ class NflreadpyConfig(BaseSettings):
         - NFLREADPY_CACHE_DIR: Directory path for filesystem cache
         - NFLREADPY_CACHE_DURATION: Cache duration in seconds
         - NFLREADPY_VERBOSE: Enable verbose output (true/false)
+        - NFLREADPY_SHOW_METADATA: Print the "Data updated" line (true/false)
         - NFLREADPY_TIMEOUT: HTTP request timeout in seconds
         - NFLREADPY_USER_AGENT: Custom user agent string
 
@@ -87,6 +88,12 @@ class NflreadpyConfig(BaseSettings):
         default=False,
         description="Enable verbose output including progress bars and download status messages. Set to False for silent operation.",
         alias="NFLREADPY_VERBOSE",
+    )
+
+    show_metadata: bool | None = Field(
+        default=None,
+        description="Print the nflverse data type and a 'Data updated' line when data with nflverse metadata is loaded. If not set, follows 'verbose'. Set to False to hide the line even in verbose mode.",
+        alias="NFLREADPY_SHOW_METADATA",
     )
 
     # Request settings
@@ -139,6 +146,7 @@ def update_config(**kwargs: Any) -> None:
             - cache_dir: Path to cache directory (str or Path)
             - cache_duration: Cache duration in seconds (int)
             - verbose: Enable verbose output (bool)
+            - show_metadata: Print the "Data updated" line (bool or None)
             - timeout: HTTP timeout in seconds (int)
             - user_agent: Custom user agent string (str)
 

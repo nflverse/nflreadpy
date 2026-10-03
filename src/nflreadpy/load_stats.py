@@ -5,6 +5,7 @@ from typing import Literal
 import polars as pl
 
 from .downloader import get_downloader
+from .metadata import copy_metadata
 from .utils_date import get_current_season
 
 
@@ -61,7 +62,8 @@ def _load_stats(
     if len(dataframes) == 1:
         return dataframes[0]
     else:
-        return pl.concat(dataframes, how="diagonal_relaxed")
+        combined = pl.concat(dataframes, how="diagonal_relaxed")
+        return copy_metadata(dataframes[-1], combined)
 
 
 def load_player_stats(

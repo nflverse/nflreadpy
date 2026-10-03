@@ -20,12 +20,18 @@ NFLVERSE_METADATA = {
 }
 
 
-def make_parquet(metadata=None):
+def make_parquet(metadata=None, season=2025):
     """Create a small parquet file in memory, optionally with key-value metadata."""
     if metadata is not None and not hasattr(pl, "read_parquet_metadata"):
         pytest.skip("Polars version has no parquet key-value metadata support")
 
-    df = pl.DataFrame({"season": [2025, 2025, 2025], "play_id": [1, 2, 3]})
+    df = pl.DataFrame(
+        {
+            "season": [season, season, season],
+            "play_id": [1, 2, 3],
+            "roof": ["dome", "outdoors", "unknown"],
+        }
+    )
     buffer = io.BytesIO()
     if metadata is None:
         df.write_parquet(buffer)
@@ -46,7 +52,7 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Serves one file for every request and counts the requests."""
+    """Serves one file, or a dict of file name to content, and records the URLs."""
 
     def __init__(self, monkeypatch, content):
         self.content = content
@@ -55,6 +61,8 @@ class FakeSession:
 
     def get(self, url, **kwargs):
         self.calls.append(url)
+        if isinstance(self.content, dict):
+            return FakeResponse(self.content[url.rsplit("/", 1)[-1]])
         return FakeResponse(self.content)
 
 
@@ -143,6 +151,22 @@ class TestGetMetadata:
         frame = object()
         assert nfl_metadata.attach_metadata(frame, NFLVERSE_METADATA) is frame
         assert nfl.get_metadata(frame) == {}
+
+    def test_copy_metadata(self):
+        """Test copying metadata to a frame built from another frame."""
+        source = pl.DataFrame({"a": [1, 2]})
+        nfl_metadata.attach_metadata(source, NFLVERSE_METADATA)
+
+        target = source.filter(pl.col("a") > 1)
+        assert nfl_metadata.copy_metadata(source, target) is target
+        assert nfl.get_metadata(target) == NFLVERSE_METADATA
+
+    def test_copy_metadata_from_frame_without_metadata(self):
+        """Test that copying from a frame without metadata leaves none."""
+        target = pl.DataFrame({"a": [1]})
+        nfl_metadata.attach_metadata(target, NFLVERSE_METADATA)
+        nfl_metadata.copy_metadata(pl.DataFrame({"a": [1]}), target)
+        assert nfl.get_metadata(target) == {}
 
     def test_new_frames_have_no_metadata(self):
         """Test that frames created by Polars operations have no metadata."""
@@ -342,3 +366,42 @@ class TestDownloaderMetadata:
         assert len(session.calls) == 1
         assert len(second) == 3
         assert nfl.get_metadata(second) == {}
+
+
+class TestLoaderMetadata:
+    """Test that load functions keep metadata when they build a new frame."""
+
+    def test_multiple_seasons_use_last_file(self, monkeypatch):
+        """Test that combined seasons carry the metadata of the last file."""
+        older = {**NFLVERSE_METADATA, "nflverse_timestamp": "2026-08-13 08:26:18 EDT"}
+        FakeSession(
+            monkeypatch,
+            {
+                "play_by_play_2024.parquet": make_parquet(older, season=2024),
+                "play_by_play_2025.parquet": make_parquet(NFLVERSE_METADATA),
+            },
+        )
+        df = nfl.load_pbp([2024, 2025])
+        assert len(df) == 6
+        assert nfl.get_metadata(df) == NFLVERSE_METADATA
+
+    def test_season_filter_keeps_metadata(self, monkeypatch):
+        """Test loaders that filter one file by season."""
+        FakeSession(monkeypatch, make_parquet(NFLVERSE_METADATA))
+        df = nfl.load_draft_picks(2025)
+        assert len(df) == 3
+        assert nfl.get_metadata(df) == NFLVERSE_METADATA
+
+    def test_load_schedules_keeps_metadata(self, monkeypatch):
+        """Test load_schedules, which filters and cleans the roof column."""
+        FakeSession(monkeypatch, make_parquet(NFLVERSE_METADATA))
+        for df in [nfl.load_schedules(), nfl.load_schedules(2025)]:
+            assert df["roof"].to_list() == ["dome", "outdoors", None]
+            assert nfl.get_metadata(df) == NFLVERSE_METADATA
+
+    def test_multiple_seasons_without_metadata(self, monkeypatch):
+        """Test that combined files without metadata still load."""
+        FakeSession(monkeypatch, make_parquet())
+        df = nfl.load_pbp([2024, 2025])
+        assert len(df) == 6
+        assert nfl.get_metadata(df) == {}

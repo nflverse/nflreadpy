@@ -5,6 +5,7 @@ from typing import Literal
 import polars as pl
 
 from .downloader import get_downloader
+from .metadata import copy_metadata
 from .utils_date import get_current_season
 
 
@@ -59,6 +60,6 @@ def load_nextgen_stats(
 
     # Filter by seasons
     if "season" in df.columns:
-        df = df.filter(pl.col("season").is_in(seasons))
+        df = copy_metadata(df, df.filter(pl.col("season").is_in(seasons)))
 
     return df

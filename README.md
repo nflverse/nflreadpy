@@ -145,7 +145,8 @@ pbp = nfl.load_pbp(2025)
 # nflverse play by play data | Data updated: 2026-08-13 14:26:02 CEST
 ```
 
-`get_metadata()` returns `{}` for csv files and older parquet files.
+`get_metadata()` returns `{}` for csv files and older parquet files. Loading
+several seasons gives the metadata of the last file, like nflreadr.
 
 ## Getting help
 

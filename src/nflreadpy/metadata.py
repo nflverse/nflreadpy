@@ -69,6 +69,15 @@ def attach_metadata(df: pl.DataFrame, metadata: dict[str, str]) -> pl.DataFrame:
     return df
 
 
+def copy_metadata(source: pl.DataFrame, target: pl.DataFrame) -> pl.DataFrame:
+    """Copy the metadata of `source` to `target` and return `target`.
+
+    Loaders that combine several files pass the last one, like
+    `rbindlist_with_attrs()` in nflreadr.
+    """
+    return attach_metadata(target, get_metadata(source))
+
+
 def get_metadata(df: pl.DataFrame) -> dict[str, str]:
     """
     Get the nflverse metadata of a DataFrame returned by a load function.
@@ -88,9 +97,9 @@ def get_metadata(df: pl.DataFrame) -> dict[str, str]:
          'nflverse_type': 'play by play data'}
 
     Note:
-        Frames created with `filter()`, `pl.concat()` etc. have no metadata.
-        For now this includes load functions that build a new frame (several
-        seasons, a season filter, `load_schedules()`).
+        With several seasons the metadata of the last file is returned, like
+        nflreadr. Frames you create with `filter()`, `pl.concat()` etc. have
+        no metadata.
     """
     entry = _registry.get(id(df))
     if entry is None:

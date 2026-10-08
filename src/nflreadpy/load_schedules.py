@@ -3,6 +3,7 @@
 import polars as pl
 
 from .downloader import get_downloader
+from .metadata import copy_metadata
 from .utils_date import get_current_season
 
 
@@ -37,16 +38,17 @@ def load_schedules(seasons: int | list[int] | bool | None = True) -> pl.DataFram
             seasons = [seasons]
 
         # Filter the dataframe by season
-        df = df.filter(pl.col("season").is_in(seasons))
+        df = copy_metadata(df, df.filter(pl.col("season").is_in(seasons)))
 
     # Validate and clean roof values (matching nflreadr logic)
     if "roof" in df.columns:
         valid_roof_values = ["dome", "outdoors", "closed", "open"]
-        df = df.with_columns(
+        cleaned = df.with_columns(
             pl.when(pl.col("roof").is_in(valid_roof_values))
             .then(pl.col("roof"))
             .otherwise(None)
             .alias("roof")
         )
+        df = copy_metadata(df, cleaned)
 
     return df

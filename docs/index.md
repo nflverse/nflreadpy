@@ -56,6 +56,12 @@ pbp_pandas = pbp.to_pandas()
 
 [Reference page for config options](api/configuration.md)
 
+## Data updates
+
+[`get_metadata()`](api/utils.md) returns the nflverse data type and last update
+time of loaded data. Set `show_metadata` to print a "Data updated" line when a
+file with metadata is loaded.
+
 ## Getting help
 
 The best places to get help on this package are:

@@ -37,6 +37,7 @@ from pathlib import Path
 import polars as pl
 
 from .config import CacheMode, get_config
+from .metadata import attach_metadata, get_metadata, read_file_metadata
 
 
 class CacheManager:
@@ -122,7 +123,9 @@ class CacheManager:
                     # Check if file is expired based on modification time
                     file_mtime = file_path.stat().st_mtime
                     if current_time - file_mtime < config.cache_duration:
-                        return pl.read_parquet(file_path)
+                        data = pl.read_parquet(file_path)
+                        attach_metadata(data, read_file_metadata(file_path))
+                        return data
                     else:
                         # Remove expired cache file
                         file_path.unlink(missing_ok=True)
@@ -165,7 +168,12 @@ class CacheManager:
         elif config.cache_mode == CacheMode.FILESYSTEM:
             file_path = self._get_file_path(cache_key)
             try:
-                data.write_parquet(file_path)
+                # Keep the nflverse metadata in the cache file
+                metadata = get_metadata(data)
+                if metadata:
+                    data.write_parquet(file_path, metadata=metadata)
+                else:
+                    data.write_parquet(file_path)
             except Exception as e:
                 if config.verbose:
                     print(f"Failed to write cache file {file_path}: {e}")

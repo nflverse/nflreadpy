@@ -4,6 +4,8 @@ from datetime import date
 
 import polars as pl
 
+from .metadata import quiet_metadata
+
 
 def get_current_season(roster: bool = False) -> int:
     """
@@ -86,7 +88,9 @@ def get_current_week(use_date: bool = False, **kwargs) -> int:
 
         return int(week)
     else:
-        sched = load_schedules(seasons=get_current_season(**kwargs))
+        # Internal read, don't print the Data updated line
+        with quiet_metadata():
+            sched = load_schedules(seasons=get_current_season(**kwargs))
         count_na_weeks = sched.select("result").null_count().item()
         if count_na_weeks == 0:
             # no NA values in result, return max(week)

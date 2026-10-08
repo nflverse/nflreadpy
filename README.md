@@ -92,6 +92,7 @@ pbp_pandas = pbp.to_pandas()
 - `clear_cache()` - Clear cached data
 - `get_current_season()` - Get current NFL season
 - `get_current_week()` - Get current NFL week
+- `get_metadata()` - Get nflverse metadata (data type, last update) of loaded data
 
 ## Configuration
 
@@ -103,6 +104,7 @@ export NFLREADPY_CACHE_DIR='~/my_cache_dir' # Directory path for filesystem cach
 export NFLREADPY_CACHE_DURATION=86400 # Cache duration in seconds
 
 export NFLREADPY_VERBOSE='False' # Enable verbose output (true/false)
+export NFLREADPY_SHOW_METADATA='True' # Print the "Data updated" line (true/false), defaults to NFLREADPY_VERBOSE
 export NFLREADPY_TIMEOUT=30 # HTTP request timeout in seconds
 export NFLREADPY_USER_AGENT='nflreadpy/v0.1.1' # Custom user agent string
 ```
@@ -121,6 +123,30 @@ update_config(
     user_agent='nflreadpy/v0.1.1'
 )
 ```
+
+## Data updates
+
+nflverse parquet files record when they were last updated. nflreadpy reads this
+on download, and nflreadr shows the same timestamp when you print a loaded data
+frame.
+
+```python
+import nflreadpy as nfl
+from nflreadpy.config import update_config
+
+pbp = nfl.load_pbp(2025)
+
+nfl.get_metadata(pbp)
+# {'nflverse_timestamp': '2026-08-13 08:26:02 EDT', 'nflverse_type': 'play by play data'}
+
+# Print a "Data updated" line in your local timezone
+update_config(show_metadata=True)
+pbp = nfl.load_pbp(2025)
+# nflverse play by play data | Data updated: 2026-08-13 14:26:02 CEST
+```
+
+`get_metadata()` returns `{}` for csv files and older parquet files. Loading
+several seasons gives the metadata of the last file, like nflreadr.
 
 ## Getting help
 

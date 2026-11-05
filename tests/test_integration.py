@@ -1,8 +1,9 @@
 """Integration tests for all nflreadpy functions."""
 
-import nflreadpy as nfl
 import polars as pl
 import pytest
+
+import nflreadpy as nfl
 
 
 class TestImports:
@@ -80,10 +81,18 @@ class TestStaticDataLoaders:
     def test_load_teams(self):
         """Test load_teams function."""
         df = nfl.load_teams()
+        all_teams = nfl.load_teams(current=False)
+        current_teams = nfl.load_teams(current=True)
+
         assert isinstance(df, pl.DataFrame)
         assert len(df) > 0
         # Should have 32+ teams (accounting for relocations)
         assert len(df) >= 32
+        assert df.equals(all_teams)
+        assert "STL" in df.get_column("team_abbr").to_list()
+        assert "STL" not in current_teams.get_column("team_abbr").to_list()
+        current_abbrs = set(nfl.team_abbr_mapping().get_column("value").to_list())
+        assert set(current_teams.get_column("team_abbr").to_list()) <= current_abbrs
 
     def test_load_players(self):
         """Test load_players function."""
